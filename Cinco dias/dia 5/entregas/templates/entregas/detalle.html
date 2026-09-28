@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Seguimiento de Pedido</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .mapa-box {
+            border: 2px dashed #999;
+            background: #f7f7f7;
+            padding: 25px;
+            text-align: center;
+            margin: 20px 0;
+            max-width: 500px;
+        }
+        .datos { margin: 20px 0; }
+        .datos p { margin: 6px 0; }
+    </style>
+</head>
+<body>
+    <h1>Seguimiento de tu paquete</h1>
+
+    <div class="datos">
+        <p><strong>Folio (UUID):</strong> {{ folio }}</p>
+        <p><strong>Descripcion:</strong> {{ descripcion }}</p>
+        <p><strong>Estado:</strong> {{ estado }}</p>
+        <p><strong>Medio asignado:</strong> {{ medio_asignado }}</p>
+        <p><strong>Motivo:</strong> {{ motivo_asignacion }}</p>
+        <p><strong>Llegada estimada (ETA):</strong> {{ eta }}</p>
+    </div>
+
+    <!-- Recuadro de mapa simulado sin consultas SQL -->
+    <div class="mapa-box">
+        <p><strong>[Mapa de Entrega]</strong></p>
+        <p>Origen: {{ mapa_origen }}</p>
+        <p>Destino: {{ mapa_destino }}</p>
+    </div>
+
+    <div>
+        <a href="{% url 'crear_pedido' %}">Crear otro pedido</a> |
+        <a href="{% url 'reporte_pedido' pedido.id %}">Ver reporte gerencial</a> |
+        <a href="{% url 'lista_pedidos' %}">Ver todos los pedidos</a> |
+        <a href="{% url 'api_pedido' pedido.id %}">Ver JSON (mismo folio para la app)</a>
+    </div>
+</body>
+</html>
