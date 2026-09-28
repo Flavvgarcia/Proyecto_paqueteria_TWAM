@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Detalle del Pedido</title>
+</head>
+<body>
+    <h1>Seguimiento de tu paquete</h1>
+    <p><strong>Folio (UUID):</strong> {{ pedido.folio }}</p>
+    <p><strong>Descripción:</strong> {{ pedido.descripcion }}</p>
+    <p><strong>Estado:</strong> {{ pedido.estado }}</p>
+    <p><strong>Llegada estimada:</strong> {{ pedido.eta }}</p>
+    
+    <a href="{% url 'crear_pedido' %}">Crear otro pedido</a>
+</body>
+</html>
