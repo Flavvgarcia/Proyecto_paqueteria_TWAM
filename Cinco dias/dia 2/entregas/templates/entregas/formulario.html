@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Registrar Pedido</title>
+</head>
+<body>
+    <h1>Crear un nuevo pedido</h1>
+    <form method="POST" action="{% url 'crear_pedido' %}">
+        {% csrf_token %}
+        <label>¿Qué vas a enviar?</label><br>
+        <input type="text" name="descripcion" required>
+        <button type="submit">Guardar Pedido</button>
+    </form>
+</body>
+</html>
