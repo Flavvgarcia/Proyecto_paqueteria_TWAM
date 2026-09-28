@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Registrar Pedido</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .campo { margin-bottom: 15px; }
+        .estado-ia { margin-bottom: 20px; padding: 10px; border: 1px solid #ccc; background: #fafafa; }
+    </style>
+</head>
+<body>
+    <h1>Crear un nuevo pedido</h1>
+
+    <div class="estado-ia">
+        <strong>Estado de la IA:</strong> 
+        {% if ia_activa %}En linea{% else %}Caida (simulada){% endif %}
+        | <a href="{% url 'toggle_ia' %}">Cambiar estado</a>
+    </div>
+
+    <form method="POST" action="{% url 'crear_pedido' %}">
+        {% csrf_token %}
+        <div class="campo">
+            <label for="descripcion">Que vas a enviar?</label><br>
+            <input type="text" id="descripcion" name="descripcion" required size="40">
+        </div>
+        <button type="submit">Guardar Pedido</button>
+    </form>
+
+    <br>
+    <a href="{% url 'lista_pedidos' %}">Ver lista de pedidos</a>
+</body>
+</html>

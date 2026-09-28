@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Lista de Pedidos</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        table { border-collapse: collapse; width: 100%; max-width: 800px; margin: 20px 0; }
+        th, td { border: 1px solid #aaa; padding: 8px; text-align: left; }
+        th { background: #eee; }
+    </style>
+</head>
+<body>
+    <h1>Lista de pedidos registrados</h1>
+
+    {% if pedidos %}
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Folio</th>
+                <th>Descripcion</th>
+                <th>Estado</th>
+                <th>Medio</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in pedidos %}
+            <tr>
+                <td>{{ p.id }}</td>
+                <td>{{ p.folio }}</td>
+                <td>{{ p.descripcion }}</td>
+                <td>{{ p.estado }}</td>
+                <td>{{ p.medio_asignado|default:"-" }}</td>
+                <td>
+                    <a href="{% url 'detalle_pedido' p.id %}">Seguimiento</a> |
+                    <a href="{% url 'reporte_pedido' p.id %}">Reporte</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No hay pedidos registrados.</p>
+    {% endif %}
+
+    <div>
+        <a href="{% url 'crear_pedido' %}">Crear nuevo pedido</a>
+    </div>
+</body>
+</html>
