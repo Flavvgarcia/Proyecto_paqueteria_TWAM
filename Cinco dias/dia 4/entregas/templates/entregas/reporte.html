@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reporte Gerencial</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        table { border-collapse: collapse; width: 500px; margin: 20px 0; }
+        th, td { border: 1px solid #aaa; padding: 8px; text-align: left; }
+        th { background: #eee; }
+    </style>
+</head>
+<body>
+    <h1>Reporte Gerencial - Pedido</h1>
+
+    <table>
+        <tr>
+            <th>Folio</th>
+            <td>{{ folio }}</td>
+        </tr>
+        <tr>
+            <th>Descripcion</th>
+            <td>{{ descripcion }}</td>
+        </tr>
+        <tr>
+            <th>Estado</th>
+            <td>{{ estado }}</td>
+        </tr>
+        <tr>
+            <th>ETA</th>
+            <td>{{ eta }}</td>
+        </tr>
+        <tr>
+            <th>Medio asignado</th>
+            <td>{{ medio_asignado }}</td>
+        </tr>
+        <tr>
+            <th>Motivo</th>
+            <td>{{ motivo_asignacion }}</td>
+        </tr>
+        <tr>
+            <th>Origen</th>
+            <td>{{ mapa_origen }}</td>
+        </tr>
+        <tr>
+            <th>Destino</th>
+            <td>{{ mapa_destino }}</td>
+        </tr>
+    </table>
+
+    <p><em>Este reporte reutiliza la misma funcion de servicio que la vista de seguimiento, sin repetir consultas a la base de datos.</em></p>
+
+    <div>
+        <a href="{% url 'detalle_pedido' pedido.id %}">Volver al seguimiento</a> |
+        <a href="{% url 'lista_pedidos' %}">Ver lista de pedidos</a>
+    </div>
+</body>
+</html>
