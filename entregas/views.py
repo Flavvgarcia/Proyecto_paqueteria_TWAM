@@ -4,6 +4,8 @@ import uuid
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
+from .reglas import elegir_medio
+from .forms import CotizacionForm
 
 from .models import Pedido
 
@@ -23,6 +25,19 @@ def estado(request):
         "medios_disponibles": ["camioneta", "moto", "bicicleta", "dron"],
         "atendido_por": COPIA,
     })
+
+def cotizar(request):
+    form = CotizacionForm(request.GET)
+    if not form.is_valid():
+        errores = {campo: list(mensajes) for campo, mensajes in form.errors.items()}
+        return JsonResponse({"errores": errores}, status=400,
+                            json_dumps_params={"ensure_ascii": False})
+
+    km = form.cleaned_data["km"]
+    kg = form.cleaned_data["kg"]
+    medio, motivo = elegir_medio(km, kg)
+    return JsonResponse({"km": km, "kg": kg, "medio": medio, "motivo": motivo},
+                        json_dumps_params={"ensure_ascii": False})
 
 
 def nuevo_folio():
