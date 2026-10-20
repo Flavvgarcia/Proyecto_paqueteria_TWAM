@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views, views_ia
+from . import views, views_ia, views_panel
 
 urlpatterns = [
     path("hola/", views.hola, name="hola"),
@@ -14,4 +14,8 @@ urlpatterns = [
     # Recomendador de IA (árbol / bosque / red)
     path("", views_ia.formulario_recomendar, name="inicio"),
     path("recomendar/", views_ia.recomendar, name="recomendar"),
+
+    # Panel web (Día 2): formulario HTML + PRG + seguimiento
+    path("panel/", views_panel.nuevo_pedido, name="panel_nuevo_pedido"),
+    path("panel/pedidos/<str:folio>/", views_panel.detalle_pedido, name="panel_pedido"),
 ]

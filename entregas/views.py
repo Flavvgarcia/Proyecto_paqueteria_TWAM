@@ -1,13 +1,14 @@
 import socket
-import uuid
 
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
-from .reglas import elegir_medio
-from .forms import CotizacionForm
 
+from . import servicios
+from .forms import CotizacionForm
 from .models import Pedido
+from .reglas import elegir_medio
+from .servicios import nuevo_folio
 
 COPIA = socket.gethostname()
 
@@ -26,6 +27,7 @@ def estado(request):
         "atendido_por": COPIA,
     })
 
+
 def cotizar(request):
     form = CotizacionForm(request.GET)
     if not form.is_valid():
@@ -40,15 +42,10 @@ def cotizar(request):
                         json_dumps_params={"ensure_ascii": False})
 
 
-def nuevo_folio():
-    return uuid.uuid4().hex[:8].upper()
-
-
 @csrf_exempt
 @require_POST
 def registrar_pedido(request):
-    pedido = Pedido.objects.create(
-        folio=nuevo_folio(),
+    pedido = servicios.registrar_pedido(
         destino=request.POST.get("destino", "sin destino"),
     )
     return JsonResponse({"folio": pedido.folio, "registrado_por": COPIA}, status=201)
@@ -63,8 +60,9 @@ def seguimiento(request, folio):
         "folio": pedido.folio,
         "destino": pedido.destino,
         "estado": pedido.estado,
+        "medio": pedido.medio,
         "atendido_por": COPIA,
-    })
+    }, json_dumps_params={"ensure_ascii": False})
 
 
 @csrf_exempt
