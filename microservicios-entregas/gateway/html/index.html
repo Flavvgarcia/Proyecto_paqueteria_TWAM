@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Pedidos (microservicios)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+    form { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem 1rem; }
+    label { display: flex; flex-direction: column; font-size: .9rem; font-weight: 600; }
+    input, select { padding: .4rem; font: inherit; }
+    .completo { grid-column: 1 / -1; }
+    pre { background: #f4f4f4; padding: 1rem; overflow-x: auto; }
+    .ok { color: #0a7a35; } .mal { color: #b42318; }
+  </style>
+</head>
+<body>
+  <h1>Crear pedido</h1>
+  <p>El navegador solo habla con el gateway (puerto 8080). Nunca con pedidos ni con recomendar.</p>
+
+  <form id="f">
+    <label class="completo">Modelo
+      <select name="modelo">
+        <option value="arbol">Árbol de decisión</option>
+        <option value="bosque">Random Forest</option>
+        <option value="red">Red neuronal</option>
+      </select>
+    </label>
+
+    <label>Distancia (km) <input name="distancia_km" type="number" step="any" value="12.64" required></label>
+    <label>Peso (kg) <input name="peso_kg" type="number" step="any" value="0.31" required></label>
+    <label>Largo (cm) <input name="largo_cm" type="number" step="any" value="11.7" required></label>
+    <label>Ancho (cm) <input name="ancho_cm" type="number" step="any" value="7.6" required></label>
+    <label>Alto (cm) <input name="alto_cm" type="number" step="any" value="10.6" required></label>
+    <label>Valor declarado (MXN) <input name="valor_declarado_mxn" type="number" step="any" value="4603" required></label>
+    <label>Hora de salida (0–23) <input name="hora_salida" type="number" min="0" max="23" value="3" required></label>
+
+    <label>Prioridad
+      <select name="prioridad">
+        <option value="normal">normal</option>
+        <option value="express">express</option>
+        <option value="mismo_dia" selected>mismo_dia</option>
+      </select>
+    </label>
+    <label>Zona de destino
+      <select name="zona_destino">
+        <option value="centro">centro</option>
+        <option value="residencial">residencial</option>
+        <option value="periferia" selected>periferia</option>
+        <option value="rural">rural</option>
+      </select>
+    </label>
+    <label>Clima
+      <select name="clima">
+        <option value="despejado" selected>despejado</option>
+        <option value="lluvia">lluvia</option>
+        <option value="viento_fuerte">viento_fuerte</option>
+      </select>
+    </label>
+    <label>Tráfico
+      <select name="trafico">
+        <option value="bajo">bajo</option>
+        <option value="medio" selected>medio</option>
+        <option value="alto">alto</option>
+      </select>
+    </label>
+
+    <label><span><input name="fragil" type="checkbox"> Frágil</span></label>
+    <label><span><input name="refrigerado" type="checkbox"> Refrigerado</span></label>
+
+    <button class="completo" type="submit">Crear pedido</button>
+  </form>
+
+  <h2>Resultado</h2>
+  <div id="resultado">Todavía no hay pedido.</div>
+  <ol id="recorrido"></ol>
+  <details><summary>Respuesta completa (JSON)</summary><pre id="json"></pre></details>
+
+  <h2>Salud de los servicios</h2>
+  <button id="btn-salud" type="button">Revisar</button>
+  <ul id="salud"></ul>
+
+  <script>
+    const form = document.getElementById("f");
+    const NUMEROS = ["distancia_km", "peso_kg", "largo_cm", "ancho_cm", "alto_cm",
+                     "valor_declarado_mxn", "hora_salida"];
+
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(form);
+      const datos = Object.fromEntries(fd.entries());
+
+      // Los inputs llegan como texto: convertir a número
+      NUMEROS.forEach((c) => { datos[c] = Number(datos[c]); });
+      // Las casillas: 1 si están marcadas, 0 si no
+      datos.fragil = fd.has("fragil") ? 1 : 0;
+      datos.refrigerado = fd.has("refrigerado") ? 1 : 0;
+      // El volumen se calcula con las medidas (litros)
+      datos.volumen_l = +(datos.largo_cm * datos.ancho_cm * datos.alto_cm / 1000).toFixed(2);
+
+      const resultado = document.getElementById("resultado");
+      resultado.textContent = "Enviando...";
+      try {
+        // Solo la ruta: sin host ni puerto. La página la sirvió el gateway.
+        const r = await fetch("/pedidos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(datos),
+        });
+        const c = await r.json();
+        document.getElementById("json").textContent = "HTTP " + r.status + "\n" + JSON.stringify(c, null, 2);
+
+        if (c.folio) {
+          resultado.innerHTML =
+            "<b>Folio:</b> " + c.folio + "<br><b>Medio:</b> " + c.medio +
+            "<br><b>Modelo:</b> " + c.modelo + "<br><b>Motivo:</b> " + c.motivo +
+            (c.plan_b ? '<br><b class="mal">Plan B: recomendar no respondió</b>' : "");
+        } else {
+          resultado.innerHTML = '<b class="mal">Error ' + r.status + ":</b> " +
+            (c.detalle && c.detalle.error ? c.detalle.error : c.error);
+        }
+        document.getElementById("recorrido").innerHTML =
+          (c.recorrido || []).map((paso) => "<li>" + paso + "</li>").join("");
+      } catch (e) {
+        resultado.innerHTML = '<b class="mal">No se pudo contactar al gateway.</b>';
+      }
+    });
+
+    document.getElementById("btn-salud").addEventListener("click", async () => {
+      const lista = document.getElementById("salud");
+      lista.innerHTML = "";
+      for (const s of ["pedidos", "recomendar"]) {
+        let estado;
+        try {
+          const r = await fetch("/salud/" + s);
+          estado = r.ok ? '<span class="ok">responde</span>' : '<span class="mal">no responde (' + r.status + ")</span>";
+        } catch (e) {
+          estado = '<span class="mal">no responde</span>';
+        }
+        lista.innerHTML += "<li>" + s + ": " + estado + "</li>";
+      }
+    });
+  </script>
+</body>
+</html>
