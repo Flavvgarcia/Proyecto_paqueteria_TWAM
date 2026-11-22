@@ -1,6 +1,7 @@
 {
     "conventionalCommits.scopes": [
         "docker",
-        "IA"
+        "IA",
+        "pedidos"
     ]
 }

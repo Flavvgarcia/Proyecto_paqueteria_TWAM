@@ -99,6 +99,19 @@ def listar():
         return jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible"}), 503
     return jsonify(filas)
 
+@app.get("/pedidos/<folio>")
+def seguimiento(folio):
+    folio = folio.strip().upper()  # "a1b2c3d4" y "A1B2C3D4" son el mismo folio
+    try:
+        with conectar() as conn:
+            pedido = conn.execute(
+                "SELECT " + COLUMNAS + " FROM pedidos WHERE folio = %s", (folio,)
+            ).fetchone()
+    except psycopg.Error:
+        return jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible"}), 503
+    if pedido is None:
+        return jsonify({"servicio": "pedidos", "error": f"no existe el folio {folio}"}), 404
+    return jsonify(pedido)
 
 @app.post("/pedidos")
 def crear():
