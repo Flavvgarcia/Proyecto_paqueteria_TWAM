@@ -1,15 +1,19 @@
 """
 Servicio PEDIDOS: crea el pedido. NO carga el modelo: le pregunta a recomendar por HTTP.
+Los pedidos se guardan en PostgreSQL (su propia base, solo de este servicio).
 
-GET  /salud    -> quién es y a qué URL llama
-POST /pedidos  -> pide la sugerencia a recomendar, inventa un folio y lo guarda en memoria
-GET  /pedidos  -> lista los pedidos guardados (útil para revisar)
+GET  /salud    -> quién es, a qué URL llama y si la base responde
+POST /pedidos  -> pide la sugerencia a recomendar, inventa un folio y lo guarda en la base
+GET  /pedidos  -> lista los pedidos guardados (los más recientes primero)
 """
 import os
 import uuid
 
+import psycopg
 import requests
 from flask import Flask, jsonify, request
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 app = Flask(__name__)
 app.json.ensure_ascii = False  # acentos legibles en curl
@@ -18,7 +22,54 @@ app.json.ensure_ascii = False  # acentos legibles en curl
 RECOMENDAR_URL = os.environ.get("RECOMENDAR_URL", "http://localhost:8002")
 MEDIO_POR_DEFECTO = "camioneta"
 
-pedidos = []  # "base de datos" en memoria, como pide el enunciado
+# Datos de conexión a la base. En Compose, POSTGRES_HOST vale "db-pedidos".
+CONEXION = (
+    f"host={os.environ.get('POSTGRES_HOST', 'localhost')} "
+    f"dbname={os.environ.get('POSTGRES_DB', 'pedidos')} "
+    f"user={os.environ.get('POSTGRES_USER', 'pedidos')} "
+    f"password={os.environ.get('POSTGRES_PASSWORD', 'pedidos')}"
+)
+
+
+# Columnas que se devuelven al cliente. La fecha sale en hora de México y en texto legible.
+COLUMNAS = """folio, medio, motivo, modelo, plan_b, estado,
+    to_char(creado_en AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI:SS') AS creado_en"""
+
+
+def conectar():
+    """Abre una conexión nueva. Devuelve las filas como diccionarios."""
+    return psycopg.connect(CONEXION, row_factory=dict_row, connect_timeout=3)
+
+
+def crear_tabla():
+    """Crea la tabla la primera vez. Si ya existe, no hace nada."""
+    with conectar() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pedidos (
+                id         SERIAL PRIMARY KEY,
+                folio      VARCHAR(12) UNIQUE NOT NULL,
+                medio      VARCHAR(20) NOT NULL,
+                motivo     TEXT NOT NULL,
+                modelo     VARCHAR(20) NOT NULL,
+                plan_b     BOOLEAN NOT NULL DEFAULT FALSE,
+                estado     VARCHAR(20) NOT NULL DEFAULT 'registrado',
+                paquete    JSONB NOT NULL,
+                creado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+
+
+def guardar(pedido, paquete):
+    """Inserta el pedido y lo devuelve tal como quedó en la base."""
+    with conectar() as conn:
+        return conn.execute(
+            """
+            INSERT INTO pedidos (folio, medio, motivo, modelo, plan_b, paquete)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING """ + COLUMNAS,
+            (pedido["folio"], pedido["medio"], pedido["motivo"],
+             pedido["modelo"], pedido["plan_b"], Jsonb(paquete)),
+        ).fetchone()
 
 
 def nuevo_folio():
@@ -27,13 +78,26 @@ def nuevo_folio():
 
 @app.get("/salud")
 def salud():
-    return jsonify({"servicio": "pedidos", "estado": "ok",
-                    "recomendar_url": RECOMENDAR_URL, "pedidos_en_memoria": len(pedidos)})
+    try:
+        with conectar() as conn:
+            conn.execute("SELECT 1")
+        base = "ok"
+    except psycopg.Error:
+        base = "no responde"
+    return jsonify({"servicio": "pedidos", "estado": "ok", "base_de_datos": base,
+                    "recomendar_url": RECOMENDAR_URL})
 
 
 @app.get("/pedidos")
 def listar():
-    return jsonify(pedidos)
+    try:
+        with conectar() as conn:
+            filas = conn.execute(
+                "SELECT " + COLUMNAS + " FROM pedidos ORDER BY pedidos.creado_en DESC LIMIT 50"
+            ).fetchall()
+    except psycopg.Error:
+        return jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible"}), 503
+    return jsonify(filas)
 
 
 @app.post("/pedidos")
@@ -46,35 +110,44 @@ def crear():
     recorrido = ["gateway recibió la petición", "pedidos recibió el paquete",
                  f"pedidos llamó a recomendar ({modelo})"]
 
-    # Llamada por la red a recomendar. Si falla, NO se cae pedidos: plan B.
+    # 1) Llamada por la red a recomendar. Si falla, NO se cae pedidos: plan B.
     try:
         r = requests.post(f"{RECOMENDAR_URL}/sugerir", json=paquete, timeout=5)
     except requests.RequestException as e:
-        folio = nuevo_folio()
-        pedido = {"folio": folio, "medio": MEDIO_POR_DEFECTO, "modelo": modelo,
+        pedido = {"folio": nuevo_folio(), "medio": MEDIO_POR_DEFECTO, "modelo": modelo,
                   "motivo": "recomendar no estuvo disponible; se asignó el medio por defecto",
                   "plan_b": True}
-        pedidos.append(pedido)
         recorrido.append(f"recomendar NO respondió ({type(e).__name__}) → plan B")
-        return jsonify({**pedido, "servicio": "pedidos", "recorrido": recorrido}), 503
+        codigo = 503
+    else:
+        sugerencia = r.json()
+        if r.status_code != 200:
+            # Recomendar respondió, pero rechazó el paquete: no se crea folio.
+            recorrido.append(f"recomendar respondió {r.status_code}: {sugerencia.get('error')}")
+            return jsonify({"servicio": "pedidos", "error": "recomendar rechazó el paquete",
+                            "detalle": sugerencia, "recorrido": recorrido}), r.status_code
+        pedido = {"folio": nuevo_folio(), "medio": sugerencia["medio"],
+                  "motivo": sugerencia["motivo"],
+                  "modelo": sugerencia.get("modelo", modelo), "plan_b": False}
+        recorrido.append(f"recomendar sugirió {sugerencia['medio']}")
+        codigo = 201
 
-    sugerencia = r.json()
-    if r.status_code != 200:
-        # Recomendar sí respondió, pero rechazó el paquete (faltan campos, modelo inexistente...)
-        recorrido.append(f"recomendar respondió {r.status_code}: {sugerencia.get('error')}")
-        return jsonify({"servicio": "pedidos", "error": "recomendar rechazó el paquete",
-                        "detalle": sugerencia, "recorrido": recorrido}), r.status_code
+    # 2) Guardar en la base. Si la base no responde, error claro (no se inventa un folio).
+    try:
+        guardado = guardar(pedido, paquete)
+    except psycopg.Error:
+        recorrido.append("la base de datos NO respondió: el pedido no se guardó")
+        return jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible",
+                        "recorrido": recorrido}), 503
+    recorrido.append("pedidos guardó el pedido en la base")
 
-    folio = nuevo_folio()
-    pedido = {"folio": folio, "medio": sugerencia["medio"], "motivo": sugerencia["motivo"],
-              "modelo": sugerencia.get("modelo", modelo), "plan_b": False}
-    pedidos.append(pedido)
-    recorrido.append(f"recomendar sugirió {sugerencia['medio']}")
-    return jsonify({**pedido, "servicio": "pedidos",
-                    "preferido_por_modelo": sugerencia.get("preferido_por_modelo"),
-                    "corregido_por_reglas": sugerencia.get("corregido_por_reglas"),
-                    "recorrido": recorrido}), 201
+    respuesta = {**guardado, "servicio": "pedidos", "recorrido": recorrido}
+    if not pedido["plan_b"]:
+        respuesta["preferido_por_modelo"] = sugerencia.get("preferido_por_modelo")
+        respuesta["corregido_por_reglas"] = sugerencia.get("corregido_por_reglas")
+    return jsonify(respuesta), codigo
 
 
 if __name__ == "__main__":
+    crear_tabla()
     app.run(host="0.0.0.0", port=8001)

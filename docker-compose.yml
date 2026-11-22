@@ -3,12 +3,33 @@ services:
     build: ./recomendar
     # sin "ports": solo se alcanza desde la red interna de Compose
 
+  db-pedidos:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pedidos
+      POSTGRES_USER: pedidos
+      POSTGRES_PASSWORD: pedidos
+    volumes:
+      - datos-pedidos:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pedidos -d pedidos"]
+      interval: 2s
+      retries: 30
+
   pedidos:
     build: ./pedidos
     environment:
       RECOMENDAR_URL: http://recomendar:8002
+      POSTGRES_HOST: db-pedidos
+      POSTGRES_DB: pedidos
+      POSTGRES_USER: pedidos
+      POSTGRES_PASSWORD: pedidos
     depends_on:
-      - recomendar
+      recomendar:
+        condition: service_started
+      db-pedidos:
+        condition: service_healthy
+    restart: on-failure
 
   gateway:
     image: nginx:1.27-alpine
@@ -20,3 +41,6 @@ services:
     depends_on:
       - pedidos
       - recomendar
+
+volumes:
+  datos-pedidos:
