@@ -2,143 +2,569 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Pedidos (microservicios)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plataforma de entregas</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
-    form { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem 1rem; }
-    label { display: flex; flex-direction: column; font-size: .9rem; font-weight: 600; }
-    input, select { padding: .4rem; font: inherit; }
-    .completo { grid-column: 1 / -1; }
-    pre { background: #f4f4f4; padding: 1rem; overflow-x: auto; }
-    .ok { color: #0a7a35; } .mal { color: #b42318; }
+    :root {
+      --fondo: #f3f5f8;
+      --tarjeta: #ffffff;
+      --texto: #1b2430;
+      --suave: #5f6b7a;
+      --borde: #dde3ea;
+      --acento: #1f6feb;
+      --acento-suave: #e8f0fe;
+      --ok: #137a3f;
+      --ok-suave: #e3f5ea;
+      --aviso: #9a5b00;
+      --aviso-suave: #fff3dc;
+      --error: #b42318;
+      --error-suave: #fde8e7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--fondo);
+      color: var(--texto);
+      line-height: 1.45;
+    }
+
+    /* Encabezado */
+    header {
+      background: #14213d;
+      color: #fff;
+      padding: 18px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px 24px;
+    }
+    header h1 { margin: 0; font-size: 1.3rem; }
+    header p { margin: 2px 0 0; font-size: .85rem; opacity: .75; }
+    .salud { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .pastilla {
+      font-size: .8rem;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .12);
+      white-space: nowrap;
+    }
+    .pastilla::before { content: "●"; margin-right: 6px; color: #9aa5b1; }
+    .pastilla.ok::before { color: #4ade80; }
+    .pastilla.mal::before { color: #f87171; }
+    .boton-claro {
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, .35);
+      color: #fff;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font: inherit;
+      font-size: .8rem;
+      cursor: pointer;
+    }
+
+    /* Distribución */
+    main {
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 16px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+      gap: 20px;
+      align-items: start;
+    }
+    .columna { display: grid; gap: 20px; }
+    .tarjeta {
+      background: var(--tarjeta);
+      border: 1px solid var(--borde);
+      border-radius: 12px;
+      padding: 20px 22px;
+    }
+    .tarjeta h2 { margin: 0 0 14px; font-size: 1.05rem; }
+    .vacio { color: var(--suave); margin: 0; }
+
+    /* Formulario */
+    fieldset { border: 0; padding: 0; margin: 0 0 16px; }
+    legend {
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--suave);
+      margin-bottom: 8px;
+    }
+    .rejilla { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 12px; }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; font-weight: 600; }
+    input, select {
+      font: inherit;
+      font-weight: 400;
+      padding: 8px 10px;
+      border: 1px solid var(--borde);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--texto);
+      width: 100%;
+      min-width: 0;
+    }
+    input:focus, select:focus { outline: 2px solid var(--acento-suave); border-color: var(--acento); }
+    .casilla { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; }
+    .casilla input { width: 16px; height: 16px; flex: none; }
+    .dato-calculado { font-size: .85rem; color: var(--suave); align-self: end; padding-bottom: 8px; }
+
+    /* Selector de modelo como botones */
+    .modelos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; position: relative; }
+    .modelos input { position: absolute; opacity: 0; }
+    .modelos label {
+      border: 1px solid var(--borde);
+      border-radius: 8px;
+      padding: 10px;
+      text-align: center;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .modelos small { font-weight: 400; color: var(--suave); }
+    .modelos input:checked + label { border-color: var(--acento); background: var(--acento-suave); color: var(--acento); }
+    .modelos input:focus-visible + label { outline: 2px solid var(--acento); }
+
+    .boton {
+      width: 100%;
+      background: var(--acento);
+      color: #fff;
+      border: 0;
+      border-radius: 8px;
+      padding: 12px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .boton:disabled { opacity: .6; cursor: wait; }
+
+    /* Resultado */
+    .medio-grande { font-size: 2rem; font-weight: 700; text-transform: capitalize; margin: 0; }
+    .fila { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+    .insignia { font-size: .78rem; padding: 3px 9px; border-radius: 999px; background: var(--acento-suave); color: var(--acento); }
+    .insignia.aviso { background: var(--aviso-suave); color: var(--aviso); }
+    .insignia.error { background: var(--error-suave); color: var(--error); }
+    .insignia.ok { background: var(--ok-suave); color: var(--ok); }
+    .folio { font-family: Consolas, monospace; font-size: 1.05rem; font-weight: 700; }
+    .motivo { margin: 6px 0 0; color: var(--suave); }
+    .alerta { border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: .9rem; }
+    .alerta.error { background: var(--error-suave); color: var(--error); }
+    .alerta.aviso { background: var(--aviso-suave); color: var(--aviso); }
+
+    .recorrido { list-style: none; padding: 0; margin: 14px 0 0; counter-reset: paso; }
+    .recorrido li {
+      counter-increment: paso;
+      position: relative;
+      padding: 0 0 10px 30px;
+      font-size: .88rem;
+    }
+    .recorrido li::before {
+      content: counter(paso);
+      position: absolute;
+      left: 0;
+      top: 1px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--acento-suave);
+      color: var(--acento);
+      font-size: .72rem;
+      font-weight: 700;
+      display: grid;
+      place-items: center;
+    }
+
+    details { margin-top: 12px; font-size: .85rem; }
+    summary { cursor: pointer; color: var(--suave); }
+    pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: .8rem; }
+
+    /* Seguimiento */
+    .buscador { display: flex; gap: 8px; }
+    .buscador input { flex: 1; text-transform: uppercase; }
+    .buscador input::placeholder { text-transform: none; }
+    .buscador .boton { width: auto; padding: 8px 16px; }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 14px 0 0; font-size: .9rem; }
+    dt { color: var(--suave); }
+    dd { margin: 0; }
+
+    /* Pedidos recientes */
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th { text-align: left; color: var(--suave); font-weight: 600; padding: 6px 4px; border-bottom: 1px solid var(--borde); }
+    td { padding: 7px 4px; border-bottom: 1px solid #eef1f5; }
+    td button {
+      background: none;
+      border: 0;
+      padding: 0;
+      color: var(--acento);
+      font: inherit;
+      font-family: Consolas, monospace;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    /* Botón "Revisar" mientras consulta */
+    .boton-claro:disabled { opacity: .7; cursor: wait; }
+    .boton-claro .giro {
+      display: none;
+      width: 11px;
+      height: 11px;
+      margin-right: 6px;
+      border: 2px solid rgba(255, 255, 255, .35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      vertical-align: -1px;
+      animation: girar .7s linear infinite;
+    }
+    .boton-claro.cargando .giro { display: inline-block; }
+    .pastilla.revisando::before { color: #facc15; animation: latir .7s ease-in-out infinite alternate; }
+    @keyframes girar { to { transform: rotate(360deg); } }
+    @keyframes latir { from { opacity: 1; } to { opacity: .25; } }
+
+    /* Aviso flotante (toast) */
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      max-width: calc(100% - 40px);
+      background: #14213d;
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 10px;
+      border-left: 4px solid #4ade80;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+      font-size: .9rem;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity .25s, transform .25s;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .toast.visible { opacity: 1; transform: translateY(0); }
+    .toast.mal { border-left-color: #f87171; }
+    @media (prefers-reduced-motion: reduce) {
+      .boton-claro .giro, .pastilla.revisando::before { animation: none; }
+      .toast { transition: none; }
+    }
+
+    @media (max-width: 820px) {
+      main { grid-template-columns: 1fr; }
+      .rejilla { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .salud { margin-left: 0; }
+    }
   </style>
 </head>
 <body>
-  <h1>Crear pedido</h1>
-  <p>El navegador solo habla con el gateway (puerto 8080). Nunca con pedidos ni con recomendar.</p>
+  <header>
+    <div>
+      <h1>Plataforma de entregas</h1>
+      <p>El navegador solo habla con el gateway. Pedidos y recomendar viven en la red interna.</p>
+    </div>
+    <div class="salud" aria-live="polite">
+      <span class="pastilla" id="salud-pedidos">pedidos</span>
+      <span class="pastilla" id="salud-recomendar">recomendar</span>
+      <button class="boton-claro" id="btn-salud" type="button"><span class="giro" aria-hidden="true"></span><span class="texto">Revisar</span></button>
+    </div>
+  </header>
 
-  <form id="f">
-    <label class="completo">Modelo
-      <select name="modelo">
-        <option value="arbol">Árbol de decisión</option>
-        <option value="bosque">Random Forest</option>
-        <option value="red">Red neuronal</option>
-      </select>
-    </label>
+  <main>
+    <!-- Columna izquierda: crear pedido -->
+    <section class="tarjeta">
+      <h2>Nuevo pedido</h2>
+      <form id="form-pedido">
+        <fieldset>
+          <legend>Modelo que recomienda</legend>
+          <div class="modelos">
+            <input type="radio" name="modelo" id="m-arbol" value="arbol" checked>
+            <label for="m-arbol">Árbol<br><small>se puede explicar</small></label>
+            <input type="radio" name="modelo" id="m-bosque" value="bosque">
+            <label for="m-bosque">Random Forest<br><small>300 árboles</small></label>
+            <input type="radio" name="modelo" id="m-red" value="red">
+            <label for="m-red">Red neuronal<br><small>MLP</small></label>
+          </div>
+        </fieldset>
 
-    <label>Distancia (km) <input name="distancia_km" type="number" step="any" value="12.64" required></label>
-    <label>Peso (kg) <input name="peso_kg" type="number" step="any" value="0.31" required></label>
-    <label>Largo (cm) <input name="largo_cm" type="number" step="any" value="11.7" required></label>
-    <label>Ancho (cm) <input name="ancho_cm" type="number" step="any" value="7.6" required></label>
-    <label>Alto (cm) <input name="alto_cm" type="number" step="any" value="10.6" required></label>
-    <label>Valor declarado (MXN) <input name="valor_declarado_mxn" type="number" step="any" value="4603" required></label>
-    <label>Hora de salida (0–23) <input name="hora_salida" type="number" min="0" max="23" value="3" required></label>
+        <fieldset>
+          <legend>Ruta</legend>
+          <div class="rejilla">
+            <label>Distancia (km) <input name="distancia_km" type="number" step="any" min="0" value="12.64" required></label>
+            <label>Hora de salida <input name="hora_salida" type="number" min="0" max="23" value="3" required></label>
+            <label>Zona de destino
+              <select name="zona_destino">
+                <option value="centro">Centro</option>
+                <option value="residencial">Residencial</option>
+                <option value="periferia" selected>Periferia</option>
+                <option value="rural">Rural</option>
+              </select>
+            </label>
+            <label>Clima
+              <select name="clima">
+                <option value="despejado" selected>Despejado</option>
+                <option value="lluvia">Lluvia</option>
+                <option value="viento_fuerte">Viento fuerte</option>
+              </select>
+            </label>
+            <label>Tráfico
+              <select name="trafico">
+                <option value="bajo">Bajo</option>
+                <option value="medio" selected>Medio</option>
+                <option value="alto">Alto</option>
+              </select>
+            </label>
+            <label>Prioridad
+              <select name="prioridad">
+                <option value="normal">Normal</option>
+                <option value="express">Express</option>
+                <option value="mismo_dia" selected>Mismo día</option>
+              </select>
+            </label>
+          </div>
+        </fieldset>
 
-    <label>Prioridad
-      <select name="prioridad">
-        <option value="normal">normal</option>
-        <option value="express">express</option>
-        <option value="mismo_dia" selected>mismo_dia</option>
-      </select>
-    </label>
-    <label>Zona de destino
-      <select name="zona_destino">
-        <option value="centro">centro</option>
-        <option value="residencial">residencial</option>
-        <option value="periferia" selected>periferia</option>
-        <option value="rural">rural</option>
-      </select>
-    </label>
-    <label>Clima
-      <select name="clima">
-        <option value="despejado" selected>despejado</option>
-        <option value="lluvia">lluvia</option>
-        <option value="viento_fuerte">viento_fuerte</option>
-      </select>
-    </label>
-    <label>Tráfico
-      <select name="trafico">
-        <option value="bajo">bajo</option>
-        <option value="medio" selected>medio</option>
-        <option value="alto">alto</option>
-      </select>
-    </label>
+        <fieldset>
+          <legend>Paquete</legend>
+          <div class="rejilla">
+            <label>Largo (cm) <input name="largo_cm" type="number" step="any" min="0" value="11.7" required></label>
+            <label>Ancho (cm) <input name="ancho_cm" type="number" step="any" min="0" value="7.6" required></label>
+            <label>Alto (cm) <input name="alto_cm" type="number" step="any" min="0" value="10.6" required></label>
+            <label>Peso (kg) <input name="peso_kg" type="number" step="any" min="0" value="0.31" required></label>
+            <label>Valor declarado ($) <input name="valor_declarado_mxn" type="number" step="any" min="0" value="4603" required></label>
+            <span class="dato-calculado">Volumen: <b id="volumen">0.94</b> L</span>
+            <label class="casilla"><input name="fragil" type="checkbox"> Frágil</label>
+            <label class="casilla"><input name="refrigerado" type="checkbox"> Refrigerado</label>
+          </div>
+        </fieldset>
 
-    <label><span><input name="fragil" type="checkbox"> Frágil</span></label>
-    <label><span><input name="refrigerado" type="checkbox"> Refrigerado</span></label>
+        <button class="boton" id="btn-crear" type="submit">Crear pedido</button>
+      </form>
+    </section>
 
-    <button class="completo" type="submit">Crear pedido</button>
-  </form>
+    <!-- Columna derecha: resultado, seguimiento y recientes -->
+    <div class="columna">
+      <section class="tarjeta" aria-live="polite">
+        <h2>Resultado</h2>
+        <div id="resultado"><p class="vacio">Crea un pedido para ver aquí el medio asignado.</p></div>
+      </section>
 
-  <h2>Resultado</h2>
-  <div id="resultado">Todavía no hay pedido.</div>
-  <ol id="recorrido"></ol>
-  <details><summary>Respuesta completa (JSON)</summary><pre id="json"></pre></details>
+      <section class="tarjeta">
+        <h2>Seguimiento</h2>
+        <form class="buscador" id="form-folio">
+          <input id="folio" placeholder="Folio, p. ej. A1B2C3D4" maxlength="12" required aria-label="Folio">
+          <button class="boton" type="submit">Buscar</button>
+        </form>
+        <div id="seguimiento" aria-live="polite"></div>
+      </section>
 
-  <h2>Salud de los servicios</h2>
-  <button id="btn-salud" type="button">Revisar</button>
-  <ul id="salud"></ul>
+      <section class="tarjeta">
+        <h2>Pedidos recientes</h2>
+        <div id="recientes"><p class="vacio">Cargando…</p></div>
+      </section>
+    </div>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
-    const form = document.getElementById("f");
+    // Todas las rutas son relativas: van al gateway que sirvió esta página.
     const NUMEROS = ["distancia_km", "peso_kg", "largo_cm", "ancho_cm", "alto_cm",
                      "valor_declarado_mxn", "hora_salida"];
+    const formPedido = document.getElementById("form-pedido");
 
-    form.addEventListener("submit", async (ev) => {
+    // Escapa texto antes de meterlo al HTML (evita que un dato raro se vuelva código).
+    function esc(valor) {
+      const div = document.createElement("div");
+      div.textContent = valor == null ? "" : String(valor);
+      return div.innerHTML;
+    }
+
+    // Llama al gateway y regresa { status, cuerpo }. Si no hay red, cuerpo = null.
+    async function llamar(ruta, opciones) {
+      try {
+        const r = await fetch(ruta, opciones);
+        let cuerpo = null;
+        try { cuerpo = await r.json(); } catch (e) { /* respuesta sin JSON (p. ej. 502 de nginx) */ }
+        return { status: r.status, cuerpo };
+      } catch (e) {
+        return { status: 0, cuerpo: null };
+      }
+    }
+
+    // ---------- Volumen calculado en vivo ----------
+    function calcularVolumen() {
+      const f = new FormData(formPedido);
+      const litros = Number(f.get("largo_cm")) * Number(f.get("ancho_cm")) * Number(f.get("alto_cm")) / 1000;
+      return Number.isFinite(litros) ? +litros.toFixed(2) : 0;
+    }
+    formPedido.addEventListener("input", () => {
+      document.getElementById("volumen").textContent = calcularVolumen();
+    });
+
+    // ---------- Crear pedido ----------
+    formPedido.addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      const fd = new FormData(form);
+      const boton = document.getElementById("btn-crear");
+      const fd = new FormData(formPedido);
       const datos = Object.fromEntries(fd.entries());
-
-      // Los inputs llegan como texto: convertir a número
       NUMEROS.forEach((c) => { datos[c] = Number(datos[c]); });
-      // Las casillas: 1 si están marcadas, 0 si no
       datos.fragil = fd.has("fragil") ? 1 : 0;
       datos.refrigerado = fd.has("refrigerado") ? 1 : 0;
-      // El volumen se calcula con las medidas (litros)
-      datos.volumen_l = +(datos.largo_cm * datos.ancho_cm * datos.alto_cm / 1000).toFixed(2);
+      datos.volumen_l = calcularVolumen();
 
-      const resultado = document.getElementById("resultado");
-      resultado.textContent = "Enviando...";
-      try {
-        // Solo la ruta: sin host ni puerto. La página la sirvió el gateway.
-        const r = await fetch("/pedidos", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(datos),
-        });
-        const c = await r.json();
-        document.getElementById("json").textContent = "HTTP " + r.status + "\n" + JSON.stringify(c, null, 2);
+      boton.disabled = true;
+      boton.textContent = "Enviando…";
+      const { status, cuerpo } = await llamar("/pedidos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(datos),
+      });
+      boton.disabled = false;
+      boton.textContent = "Crear pedido";
 
-        if (c.folio) {
-          resultado.innerHTML =
-            "<b>Folio:</b> " + c.folio + "<br><b>Medio:</b> " + c.medio +
-            "<br><b>Modelo:</b> " + c.modelo + "<br><b>Motivo:</b> " + c.motivo +
-            (c.plan_b ? '<br><b class="mal">Plan B: recomendar no respondió</b>' : "");
+      mostrarResultado(status, cuerpo);
+      cargarRecientes();
+    });
+
+    function mostrarResultado(status, c) {
+      const caja = document.getElementById("resultado");
+      if (!c) {
+        caja.innerHTML = '<div class="alerta error">No se pudo contactar al gateway (HTTP ' + status + ').</div>';
+        return;
+      }
+      let html = "";
+      if (c.folio) {
+        const insignias = ['<span class="insignia">' + esc(c.modelo) + "</span>"];
+        if (c.corregido_por_reglas) {
+          insignias.push('<span class="insignia aviso">corregido por reglas: el modelo prefería ' + esc(c.preferido_por_modelo) + "</span>");
+        }
+        if (c.plan_b) insignias.push('<span class="insignia error">plan B</span>');
+        html += '<p class="vacio">Folio <span class="folio">' + esc(c.folio) + "</span></p>";
+        html += '<p class="medio-grande">' + esc(c.medio) + "</p>";
+        html += '<div class="fila">' + insignias.join("") + "</div>";
+        html += '<p class="motivo">' + esc(c.motivo) + "</p>";
+        if (c.plan_b) {
+          html += '<div class="alerta aviso">Recomendar no respondió: se asignó el medio por defecto. Pedidos siguió funcionando.</div>';
+        }
+      } else {
+        const detalle = c.detalle && c.detalle.error ? c.detalle.error : c.error;
+        html += '<div class="alerta error"><b>Error ' + status + ":</b> " + esc(detalle) + "</div>";
+      }
+      if (c.recorrido) {
+        html += '<ol class="recorrido">' + c.recorrido.map((p) => "<li>" + esc(p) + "</li>").join("") + "</ol>";
+      }
+      html += "<details><summary>Ver respuesta completa (JSON)</summary><pre>" +
+              esc("HTTP " + status + "\n" + JSON.stringify(c, null, 2)) + "</pre></details>";
+      caja.innerHTML = html;
+    }
+
+    // ---------- Seguimiento por folio ----------
+    document.getElementById("form-folio").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      buscarFolio(document.getElementById("folio").value);
+    });
+
+    async function buscarFolio(folio) {
+      folio = folio.trim().toUpperCase();
+      document.getElementById("folio").value = folio;
+      const caja = document.getElementById("seguimiento");
+      if (!folio) return;
+      const { status, cuerpo: c } = await llamar("/pedidos/" + encodeURIComponent(folio));
+      if (status === 200 && c) {
+        caja.innerHTML =
+          "<dl>" +
+          "<dt>Estado</dt><dd><span class=\"insignia ok\">" + esc(c.estado) + "</span></dd>" +
+          "<dt>Medio</dt><dd><b>" + esc(c.medio) + "</b>" + (c.plan_b ? ' <span class="insignia error">plan B</span>' : "") + "</dd>" +
+          "<dt>Modelo</dt><dd>" + esc(c.modelo) + "</dd>" +
+          "<dt>Registrado</dt><dd>" + esc(c.creado_en) + "</dd>" +
+          "<dt>Motivo</dt><dd>" + esc(c.motivo) + "</dd>" +
+          "</dl>";
+      } else if (status === 404) {
+        caja.innerHTML = '<div class="alerta aviso">No existe el folio <b>' + esc(folio) + "</b>.</div>";
+      } else {
+        const msg = c && c.error ? c.error : "no se pudo consultar (HTTP " + status + ")";
+        caja.innerHTML = '<div class="alerta error">' + esc(msg) + "</div>";
+      }
+    }
+
+    // ---------- Pedidos recientes ----------
+    async function cargarRecientes() {
+      const caja = document.getElementById("recientes");
+      const { status, cuerpo } = await llamar("/pedidos");
+      if (status !== 200 || !Array.isArray(cuerpo)) {
+        caja.innerHTML = '<p class="vacio">No se pudo cargar la lista.</p>';
+        return;
+      }
+      if (cuerpo.length === 0) {
+        caja.innerHTML = '<p class="vacio">Todavía no hay pedidos.</p>';
+        return;
+      }
+      const filas = cuerpo.slice(0, 8).map((p) =>
+        "<tr><td><button type=\"button\" data-folio=\"" + esc(p.folio) + "\">" + esc(p.folio) + "</button></td>" +
+        "<td>" + esc(p.medio) + (p.plan_b ? ' <span class="insignia error">B</span>' : "") + "</td>" +
+        "<td>" + esc(p.modelo) + "</td>" +
+        "<td>" + esc(p.creado_en) + "</td></tr>").join("");
+      caja.innerHTML = "<table><thead><tr><th>Folio</th><th>Medio</th><th>Modelo</th><th>Fecha</th></tr></thead>" +
+                       "<tbody>" + filas + "</tbody></table>";
+    }
+
+    // Clic en un folio de la tabla: lo busca en Seguimiento.
+    document.getElementById("recientes").addEventListener("click", (ev) => {
+      const boton = ev.target.closest("button[data-folio]");
+      if (boton) buscarFolio(boton.dataset.folio);
+    });
+
+    // ---------- Aviso flotante (toast) ----------
+    let temporizadorToast;
+    function mostrarToast(mensaje, bien) {
+      const toast = document.getElementById("toast");
+      toast.textContent = mensaje;
+      toast.className = "toast visible" + (bien ? "" : " mal");
+      clearTimeout(temporizadorToast);
+      temporizadorToast = setTimeout(() => { toast.className = toast.className.replace(" visible", ""); }, 3500);
+    }
+
+    // ---------- Salud de los servicios ----------
+    async function revisarSalud(avisar) {
+      const boton = document.getElementById("btn-salud");
+      boton.disabled = true;
+      boton.classList.add("cargando");
+      boton.querySelector(".texto").textContent = "Revisando…";
+
+      const servicios = ["pedidos", "recomendar"];
+      servicios.forEach((s) => {
+        const pastilla = document.getElementById("salud-" + s);
+        pastilla.className = "pastilla revisando";
+        pastilla.textContent = s + " · revisando";
+      });
+
+      // Las dos consultas a la vez; se espera a que terminen ambas.
+      const resultados = await Promise.all(servicios.map((s) => llamar("/salud/" + s)));
+      const caidos = [];
+      servicios.forEach((s, i) => {
+        const vivo = resultados[i].status === 200;
+        const pastilla = document.getElementById("salud-" + s);
+        pastilla.className = "pastilla " + (vivo ? "ok" : "mal");
+        pastilla.textContent = s + (vivo ? " · responde" : " · no responde");
+        if (!vivo) caidos.push(s);
+      });
+
+      boton.disabled = false;
+      boton.classList.remove("cargando");
+      boton.querySelector(".texto").textContent = "Revisar";
+
+      if (avisar) {
+        const hora = new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        if (caidos.length === 0) {
+          mostrarToast("✓ Todos los servicios responden (" + hora + ")", true);
         } else {
-          resultado.innerHTML = '<b class="mal">Error ' + r.status + ":</b> " +
-            (c.detalle && c.detalle.error ? c.detalle.error : c.error);
+          mostrarToast("✗ No responde: " + caidos.join(", ") + " (" + hora + ")", false);
         }
-        document.getElementById("recorrido").innerHTML =
-          (c.recorrido || []).map((paso) => "<li>" + paso + "</li>").join("");
-      } catch (e) {
-        resultado.innerHTML = '<b class="mal">No se pudo contactar al gateway.</b>';
       }
-    });
+    }
+    document.getElementById("btn-salud").addEventListener("click", () => revisarSalud(true));
 
-    document.getElementById("btn-salud").addEventListener("click", async () => {
-      const lista = document.getElementById("salud");
-      lista.innerHTML = "";
-      for (const s of ["pedidos", "recomendar"]) {
-        let estado;
-        try {
-          const r = await fetch("/salud/" + s);
-          estado = r.ok ? '<span class="ok">responde</span>' : '<span class="mal">no responde (' + r.status + ")</span>";
-        } catch (e) {
-          estado = '<span class="mal">no responde</span>';
-        }
-        lista.innerHTML += "<li>" + s + ": " + estado + "</li>";
-      }
-    });
+    // Al abrir la página
+    revisarSalud(false);  // al cargar, sin aviso
+    cargarRecientes();
   </script>
 </body>
 </html>
