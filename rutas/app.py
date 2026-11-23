@@ -3,8 +3,9 @@ Servicio RUTAS: calcula el plan de entrega (km, minutos, indicación) desde el a
 hasta el destino. Usa OpenRouteService para moto, camioneta y bicicleta; el dron va en
 línea recta y se calcula aquí mismo. Si ORS falla, estima (plan B) y lo dice.
 
-GET  /salud -> quién es y si tiene clave de ORS configurada
-POST /plan  -> {"medio": "moto", "destino": {"lat": 19.70, "lng": -101.19}}
+GET  /salud     -> quién es y si tiene clave de ORS configurada
+POST /distancia -> {"destino": {...}}: km por calle (en auto) desde el almacén; la usa el modelo
+POST /plan      -> {"medio": "moto", "destino": {"lat": 19.70, "lng": -101.19}}
 """
 import math
 import os
@@ -69,6 +70,15 @@ def linea_recta_km(a, b):
     return 2 * radio * math.asin(math.sqrt(h))
 
 
+def distancia_por_calle(origen, destino):
+    """Km por calle en auto (la "distancia_km" del dataset). Si ORS falla, estima."""
+    try:
+        km, _ = ors.ruta("driving-car", origen, destino)
+        return round(km, 2), "openrouteservice", None
+    except ErrorRuta as e:
+        return round(linea_recta_km(origen, destino) * FACTOR_CALLES, 2), "estimado", str(e)
+
+
 # ---------------------------------------------------------------------------
 # Strategy: cada medio sabe planear su entrega con la misma interfaz.
 # ---------------------------------------------------------------------------
@@ -131,6 +141,22 @@ def leer_punto(dato, nombre):
 def salud():
     return jsonify({"servicio": "rutas", "estado": "ok",
                     "ors_configurado": bool(ORS_API_KEY), "almacen": ALMACEN})
+
+
+@app.post("/distancia")
+def distancia():
+    datos = request.get_json(silent=True)
+    if not isinstance(datos, dict):
+        return jsonify({"servicio": "rutas", "error": "el cuerpo debe ser JSON"}), 400
+    try:
+        destino = leer_punto(datos.get("destino"), "destino")
+        origen = leer_punto(datos["origen"], "origen") if "origen" in datos else ALMACEN
+    except ValueError as e:
+        return jsonify({"servicio": "rutas", "error": str(e)}), 400
+
+    km, fuente, aviso = distancia_por_calle(origen, destino)
+    return jsonify({"servicio": "rutas", "km": km, "fuente": fuente, "aviso": aviso,
+                    "origen": origen, "destino": destino})
 
 
 @app.post("/plan")

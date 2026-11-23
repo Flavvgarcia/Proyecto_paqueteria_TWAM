@@ -316,7 +316,7 @@
             <label>Latitud <input name="destino_lat" type="number" step="any" min="-90" max="90" value="19.702423" required></label>
             <label>Longitud <input name="destino_lng" type="number" step="any" min="-180" max="180" value="-101.1923185" required></label>
             <span></span>
-            <label>Distancia (km) <input name="distancia_km" type="number" step="any" min="0" value="12.64" required></label>
+            <span class="dato-calculado">Distancia: se mide con la ruta real</span>
             <label>Hora de salida <input name="hora_salida" type="number" min="0" max="23" value="3" required></label>
             <label>Zona de destino
               <select name="zona_destino">
@@ -395,7 +395,7 @@
 
   <script>
     // Todas las rutas son relativas: van al gateway que sirvió esta página.
-    const NUMEROS = ["distancia_km", "peso_kg", "largo_cm", "ancho_cm", "alto_cm",
+    const NUMEROS = ["peso_kg", "largo_cm", "ancho_cm", "alto_cm",
                      "valor_declarado_mxn", "hora_salida"];
     const formPedido = document.getElementById("form-pedido");
 
@@ -435,6 +435,14 @@
       formPedido.elements.destino_lat.value = lat;
       formPedido.elements.destino_lng.value = lng;
     });
+
+    // Distancia con la que decidió el modelo y de dónde salió.
+    function htmlDistancia(km, fuente) {
+      if (km == null) return "";
+      const fuentes = { openrouteservice: "ruta real", estimado: "estimada", manual: "escrita a mano" };
+      return '<p class="detalle">Distancia usada por el modelo: <b>' + esc(km) + " km</b> (" +
+        esc(fuentes[fuente] || fuente) + ")</p>";
+    }
 
     // Texto del plan de entrega (o aviso si no hay).
     function htmlPlan(plan) {
@@ -500,9 +508,10 @@
         html += '<p class="medio-grande">' + esc(c.medio) + "</p>";
         html += '<div class="fila">' + insignias.join("") + "</div>";
         html += '<p class="motivo">' + esc(c.motivo) + "</p>";
+        html += htmlDistancia(c.distancia_km, c.distancia_fuente);
         html += htmlPlan(c.plan);
         if (c.plan_b) {
-          html += '<div class="alerta aviso">Recomendar no respondió: se asignó el medio por defecto. Pedidos siguió funcionando.</div>';
+          html += '<div class="alerta aviso">Plan B: se asignó el medio por defecto. Pedidos siguió funcionando.</div>';
         }
       } else {
         const detalle = c.detalle && c.detalle.error ? c.detalle.error : c.error;
