@@ -109,6 +109,20 @@
     input:focus, select:focus { outline: 2px solid var(--acento-suave); border-color: var(--acento); }
     .casilla { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; }
     .casilla input { width: 16px; height: 16px; flex: none; }
+    .doble { grid-column: span 2; }
+    .plan {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--borde);
+      border-radius: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 4px 14px;
+    }
+    .plan .tiempo { font-size: 1.4rem; font-weight: 700; }
+    .plan .detalle { color: var(--suave); font-size: .88rem; }
+    .plan .aviso { flex-basis: 100%; font-size: .8rem; color: var(--aviso); }
     .dato-calculado { font-size: .85rem; color: var(--suave); align-self: end; padding-bottom: 8px; }
 
     /* Selector de modelo como botones */
@@ -250,6 +264,7 @@
     @media (max-width: 820px) {
       main { grid-template-columns: 1fr; }
       .rejilla { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .doble { grid-column: 1 / -1; }
       .salud { margin-left: 0; }
     }
   </style>
@@ -258,11 +273,12 @@
   <header>
     <div>
       <h1>Plataforma de entregas</h1>
-      <p>El navegador solo habla con el gateway. Pedidos y recomendar viven en la red interna.</p>
+      <p>El navegador solo habla con el gateway. Pedidos, recomendar y rutas viven en la red interna.</p>
     </div>
     <div class="salud" aria-live="polite">
       <span class="pastilla" id="salud-pedidos">pedidos</span>
       <span class="pastilla" id="salud-recomendar">recomendar</span>
+      <span class="pastilla" id="salud-rutas">rutas</span>
       <button class="boton-claro" id="btn-salud" type="button"><span class="giro" aria-hidden="true"></span><span class="texto">Revisar</span></button>
     </div>
   </header>
@@ -287,6 +303,19 @@
         <fieldset>
           <legend>Ruta</legend>
           <div class="rejilla">
+            <label class="doble">Destino
+              <select id="destino-ejemplo">
+                <option value="19.702423,-101.1923185" selected>Catedral (Centro)</option>
+                <option value="19.6877224,-101.2016917">Ciudad Universitaria</option>
+                <option value="19.6892718,-101.1578151">Plaza Las Américas</option>
+                <option value="19.8464645,-101.0281372">Aeropuerto</option>
+                <option value="">Otro: escribir coordenadas</option>
+              </select>
+            </label>
+            <span class="dato-calculado">Sale del almacén (TecNM)</span>
+            <label>Latitud <input name="destino_lat" type="number" step="any" min="-90" max="90" value="19.702423" required></label>
+            <label>Longitud <input name="destino_lng" type="number" step="any" min="-180" max="180" value="-101.1923185" required></label>
+            <span></span>
             <label>Distancia (km) <input name="distancia_km" type="number" step="any" min="0" value="12.64" required></label>
             <label>Hora de salida <input name="hora_salida" type="number" min="0" max="23" value="3" required></label>
             <label>Zona de destino
@@ -399,6 +428,32 @@
       document.getElementById("volumen").textContent = calcularVolumen();
     });
 
+    // ---------- Destino: lugares de ejemplo ----------
+    document.getElementById("destino-ejemplo").addEventListener("change", (ev) => {
+      if (!ev.target.value) return;  // "Otro": se escriben a mano
+      const [lat, lng] = ev.target.value.split(",");
+      formPedido.elements.destino_lat.value = lat;
+      formPedido.elements.destino_lng.value = lng;
+    });
+
+    // Texto del plan de entrega (o aviso si no hay).
+    function htmlPlan(plan) {
+      if (!plan) {
+        return '<div class="plan"><span class="detalle">Sin plan de entrega (no se pudo calcular la ruta).</span></div>';
+      }
+      const fuentes = {
+        openrouteservice: '<span class="insignia ok">ruta real · OpenRouteService</span>',
+        linea_recta: '<span class="insignia">línea recta</span>',
+        estimado: '<span class="insignia aviso">estimado</span>',
+      };
+      return '<div class="plan">' +
+        '<span class="tiempo">' + esc(plan.minutos) + " min</span>" +
+        '<span class="detalle">' + esc(plan.km) + " km · " + esc(plan.indicacion) + "</span>" +
+        (fuentes[plan.fuente] || "") +
+        (plan.aviso ? '<span class="aviso">' + esc(plan.aviso) + "</span>" : "") +
+        "</div>";
+    }
+
     // ---------- Crear pedido ----------
     formPedido.addEventListener("submit", async (ev) => {
       ev.preventDefault();
@@ -409,6 +464,10 @@
       datos.fragil = fd.has("fragil") ? 1 : 0;
       datos.refrigerado = fd.has("refrigerado") ? 1 : 0;
       datos.volumen_l = calcularVolumen();
+      // El destino viaja como {lat, lng}; rutas lo usa para el plan.
+      datos.destino = { lat: Number(datos.destino_lat), lng: Number(datos.destino_lng) };
+      delete datos.destino_lat;
+      delete datos.destino_lng;
 
       boton.disabled = true;
       boton.textContent = "Enviando…";
@@ -441,6 +500,7 @@
         html += '<p class="medio-grande">' + esc(c.medio) + "</p>";
         html += '<div class="fila">' + insignias.join("") + "</div>";
         html += '<p class="motivo">' + esc(c.motivo) + "</p>";
+        html += htmlPlan(c.plan);
         if (c.plan_b) {
           html += '<div class="alerta aviso">Recomendar no respondió: se asignó el medio por defecto. Pedidos siguió funcionando.</div>';
         }
@@ -476,7 +536,7 @@
           "<dt>Modelo</dt><dd>" + esc(c.modelo) + "</dd>" +
           "<dt>Registrado</dt><dd>" + esc(c.creado_en) + "</dd>" +
           "<dt>Motivo</dt><dd>" + esc(c.motivo) + "</dd>" +
-          "</dl>";
+          "</dl>" + htmlPlan(c.plan);
       } else if (status === 404) {
         caja.innerHTML = '<div class="alerta aviso">No existe el folio <b>' + esc(folio) + "</b>.</div>";
       } else {
@@ -501,8 +561,9 @@
         "<tr><td><button type=\"button\" data-folio=\"" + esc(p.folio) + "\">" + esc(p.folio) + "</button></td>" +
         "<td>" + esc(p.medio) + (p.plan_b ? ' <span class="insignia error">B</span>' : "") + "</td>" +
         "<td>" + esc(p.modelo) + "</td>" +
+        "<td>" + (p.plan ? esc(p.plan.minutos) + " min" : "—") + "</td>" +
         "<td>" + esc(p.creado_en) + "</td></tr>").join("");
-      caja.innerHTML = "<table><thead><tr><th>Folio</th><th>Medio</th><th>Modelo</th><th>Fecha</th></tr></thead>" +
+      caja.innerHTML = "<table><thead><tr><th>Folio</th><th>Medio</th><th>Modelo</th><th>Tiempo</th><th>Fecha</th></tr></thead>" +
                        "<tbody>" + filas + "</tbody></table>";
     }
 
@@ -529,7 +590,7 @@
       boton.classList.add("cargando");
       boton.querySelector(".texto").textContent = "Revisando…";
 
-      const servicios = ["pedidos", "recomendar"];
+      const servicios = ["pedidos", "recomendar", "rutas"];
       servicios.forEach((s) => {
         const pastilla = document.getElementById("salud-" + s);
         pastilla.className = "pastilla revisando";

@@ -51,6 +51,7 @@ services:
     depends_on:
       - pedidos
       - recomendar
+      - rutas
 
 volumes:
   datos-pedidos:
