@@ -3,7 +3,7 @@ Servicio PEDIDOS: crea el pedido. NO carga el modelo: le pregunta a recomendar p
 Los pedidos se guardan en PostgreSQL (su propia base, solo de este servicio).
 
 GET  /salud    -> quién es, a qué URL llama y si la base responde
-POST /pedidos  -> pide la sugerencia a recomendar, inventa un folio y lo guarda en la base
+POST /pedidos  -> pide el medio a recomendar y el plan a rutas, inventa un folio y lo guarda
 GET  /pedidos  -> lista los pedidos guardados (los más recientes primero)
 """
 import os
@@ -20,6 +20,7 @@ app.json.ensure_ascii = False  # acentos legibles en curl
 
 # Dentro de Compose: http://recomendar:8002 (el nombre del servicio es el host).
 RECOMENDAR_URL = os.environ.get("RECOMENDAR_URL", "http://localhost:8002")
+RUTAS_URL = os.environ.get("RUTAS_URL", "http://localhost:8003")
 MEDIO_POR_DEFECTO = "camioneta"
 
 # Datos de conexión a la base. En Compose, POSTGRES_HOST vale "db-pedidos".
@@ -32,7 +33,7 @@ CONEXION = (
 
 
 # Columnas que se devuelven al cliente. La fecha sale en hora de México y en texto legible.
-COLUMNAS = """folio, medio, motivo, modelo, plan_b, estado,
+COLUMNAS = """folio, medio, motivo, modelo, plan_b, estado, plan,
     to_char(creado_en AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI:SS') AS creado_en"""
 
 
@@ -57,6 +58,8 @@ def crear_tabla():
                 creado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
             )
         """)
+        # La tabla ya existía antes del plan: se le agrega la columna si le falta.
+        conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS plan JSONB")
 
 
 def guardar(pedido, paquete):
@@ -64,13 +67,27 @@ def guardar(pedido, paquete):
     with conectar() as conn:
         return conn.execute(
             """
-            INSERT INTO pedidos (folio, medio, motivo, modelo, plan_b, paquete)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO pedidos (folio, medio, motivo, modelo, plan_b, paquete, plan)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING """ + COLUMNAS,
-            (pedido["folio"], pedido["medio"], pedido["motivo"],
-             pedido["modelo"], pedido["plan_b"], Jsonb(paquete)),
+            (pedido["folio"], pedido["medio"], pedido["motivo"], pedido["modelo"],
+             pedido["plan_b"], Jsonb(paquete), Jsonb(pedido["plan"]) if pedido["plan"] else None),
         ).fetchone()
-
+        
+        
+def pedir_plan(medio, destino):
+    """Le pide a rutas el plan de entrega. Regresa (plan, nota). Si falla, plan = None."""
+    if not destino:
+        return None, "sin destino: no se calculó el plan"
+    try:
+        r = requests.post(f"{RUTAS_URL}/plan", json={"medio": medio, "destino": destino}, timeout=8)
+    except requests.RequestException as e:
+        return None, f"rutas NO respondió ({type(e).__name__}): pedido sin plan"
+    if r.status_code != 200:
+        return None, f"rutas respondió {r.status_code}: {r.json().get('error')}"
+    plan = r.json()
+    datos = {c: plan.get(c) for c in ("km", "minutos", "indicacion", "fuente", "aviso")}
+    return datos, f"rutas calculó el plan: {datos['minutos']} min ({datos['fuente']})"
 
 def nuevo_folio():
     return uuid.uuid4().hex[:8].upper()
@@ -145,7 +162,11 @@ def crear():
         recorrido.append(f"recomendar sugirió {sugerencia['medio']}")
         codigo = 201
 
-    # 2) Guardar en la base. Si la base no responde, error claro (no se inventa un folio).
+    # 2) Plan de entrega con rutas. Si falla, el pedido se crea igual, sin plan.
+    pedido["plan"], nota = pedir_plan(pedido["medio"], paquete.get("destino"))
+    recorrido.append(nota)
+
+    # 3) Guardar en la base. Si la base no responde, error claro (no se inventa un folio).
     try:
         guardado = guardar(pedido, paquete)
     except psycopg.Error:

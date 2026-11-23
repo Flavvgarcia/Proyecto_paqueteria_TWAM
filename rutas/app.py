@@ -18,8 +18,9 @@ app.json.ensure_ascii = False  # acentos legibles en curl
 ORS_URL = os.environ.get("ORS_URL", "https://api.openrouteservice.org")
 ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
 ALMACEN = {
-    "lat": float(os.environ.get("ALMACEN_LAT", "19.7229386")),   # TecNM Morelia
-    "lng": float(os.environ.get("ALMACEN_LNG", "-101.1858201")),
+    # "or": si la variable no existe o viene vacía, se usa el TecNM Morelia
+    "lat": float(os.environ.get("ALMACEN_LAT") or "19.7229386"),
+    "lng": float(os.environ.get("ALMACEN_LNG") or "-101.1858201"),
 }
 FACTOR_CALLES = 1.3  # por calles se recorre ~30 % más que en línea recta
 

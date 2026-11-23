@@ -12,5 +12,6 @@
   "zona_destino": "periferia",
   "clima": "despejado",
   "hora_salida": 3,
-  "trafico": "medio"
+  "trafico": "medio",
+  "destino": {"lat": 19.7024, "lng": -101.1923}
 }

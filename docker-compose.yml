@@ -2,6 +2,13 @@ services:
   recomendar:
     build: ./recomendar
     # sin "ports": solo se alcanza desde la red interna de Compose
+  rutas:
+    build: ./rutas
+    environment:
+      # Se leen del archivo .env (que NO se sube a Git)
+      ORS_API_KEY: ${ORS_API_KEY:-}
+      ALMACEN_LAT: ${ALMACEN_LAT:-}
+      ALMACEN_LNG: ${ALMACEN_LNG:-}
 
   db-pedidos:
     image: postgres:16-alpine
@@ -20,11 +27,14 @@ services:
     build: ./pedidos
     environment:
       RECOMENDAR_URL: http://recomendar:8002
+      RUTAS_URL: http://rutas:8003
       POSTGRES_HOST: db-pedidos
       POSTGRES_DB: pedidos
       POSTGRES_USER: pedidos
       POSTGRES_PASSWORD: pedidos
     depends_on:
+      rutas:
+        condition: service_started
       recomendar:
         condition: service_started
       db-pedidos:
