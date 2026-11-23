@@ -18,6 +18,8 @@ from flask import Flask, jsonify, request
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from validacion import validar
+
 app = Flask(__name__)
 app.json.ensure_ascii = False  # acentos legibles en curl
 
@@ -269,8 +271,16 @@ def crear():
     if not isinstance(paquete, dict):
         return jsonify({"servicio": "pedidos", "error": "el cuerpo debe ser JSON"}), 400
 
-    modelo = paquete.get("modelo", "arbol")
     recorrido = ["gateway recibió la petición", "pedidos recibió el paquete"]
+
+    # 0) Validar campo por campo. Con un dato mal no se llama a nadie ni se crea folio.
+    paquete, errores = validar(paquete)
+    if errores:
+        recorrido.append(f"pedidos rechazó el paquete: {len(errores)} campo(s) con error")
+        return jsonify({"servicio": "pedidos", "error": "hay datos inválidos",
+                        "errores": errores, "recorrido": recorrido}), 400
+    recorrido.append("pedidos validó el paquete")
+    modelo = paquete.get("modelo") or "arbol"
 
     # 1) Distancia real: la mide rutas con el destino. El modelo decide con ella.
     paquete.pop("distancia_fuente", None)  # la fuente la decide pedidos, no el cliente

@@ -165,6 +165,10 @@
     .alerta { border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: .9rem; }
     .alerta.error { background: var(--error-suave); color: var(--error); }
     .alerta.aviso { background: var(--aviso-suave); color: var(--aviso); }
+    .alerta ul { margin: 6px 0 0; padding-left: 18px; }
+    /* Campo que pedidos rechazó */
+    label.invalido input, label.invalido select { border-color: var(--error); background: var(--error-suave); }
+    .error-campo { display: block; font-size: .75rem; color: var(--error); margin-top: 2px; }
 
     .recorrido { list-style: none; padding: 0; margin: 14px 0 0; counter-reset: paso; }
     .recorrido li {
@@ -493,6 +497,7 @@
       delete datos.destino_lat;
       delete datos.destino_lng;
 
+      limpiarErrores();
       boton.disabled = true;
       boton.textContent = "Enviando…";
       const { status, cuerpo } = await llamar("/pedidos", {
@@ -506,6 +511,31 @@
       mostrarResultado(status, cuerpo);
       cargarRecientes();
     });
+
+    // ---------- Errores por campo (400 de pedidos) ----------
+    const NOMBRES = {
+      peso_kg: "Peso", largo_cm: "Largo", ancho_cm: "Ancho", alto_cm: "Alto", volumen_l: "Volumen",
+      valor_declarado_mxn: "Valor declarado", distancia_km: "Distancia", hora_salida: "Hora de salida",
+      fragil: "Frágil", refrigerado: "Refrigerado", prioridad: "Prioridad", zona_destino: "Zona de destino",
+      clima: "Clima", trafico: "Tráfico", modelo: "Modelo", destino: "Destino",
+    };
+    function limpiarErrores() {
+      formPedido.querySelectorAll(".invalido").forEach((l) => l.classList.remove("invalido"));
+      formPedido.querySelectorAll(".error-campo").forEach((e) => e.remove());
+    }
+    function marcarErrores(errores) {
+      Object.entries(errores).forEach(([campo, mensaje]) => {
+        // El destino se escribe en dos inputs; los demás campos tienen el mismo nombre.
+        const nombres = campo === "destino" ? ["destino_lat", "destino_lng"] : [campo];
+        nombres.forEach((n) => {
+          const input = formPedido.elements[n];
+          const label = input && input.closest ? input.closest("label") : null;
+          if (!label) return;  // p. ej. distancia_km: no tiene input, solo sale en la lista
+          label.classList.add("invalido");
+          label.insertAdjacentHTML("beforeend", '<span class="error-campo">' + esc(mensaje) + "</span>");
+        });
+      });
+    }
 
     function mostrarResultado(status, c) {
       const caja = document.getElementById("resultado");
@@ -531,7 +561,13 @@
         }
       } else {
         const detalle = c.detalle && c.detalle.error ? c.detalle.error : c.error;
-        html += '<div class="alerta error"><b>Error ' + status + ":</b> " + esc(detalle) + "</div>";
+        let lista = "";
+        if (c.errores) {
+          marcarErrores(c.errores);
+          lista = "<ul>" + Object.entries(c.errores).map(([campo, m]) =>
+            "<li><b>" + esc(NOMBRES[campo] || campo) + ":</b> " + esc(m) + "</li>").join("") + "</ul>";
+        }
+        html += '<div class="alerta error"><b>Error ' + status + ":</b> " + esc(detalle) + lista + "</div>";
       }
       if (c.recorrido) {
         html += '<ol class="recorrido">' + c.recorrido.map((p) => "<li>" + esc(p) + "</li>").join("") + "</ol>";
