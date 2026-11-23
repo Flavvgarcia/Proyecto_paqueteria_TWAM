@@ -545,7 +545,7 @@
           "<dt>Modelo</dt><dd>" + esc(c.modelo) + "</dd>" +
           "<dt>Registrado</dt><dd>" + esc(c.creado_en) + "</dd>" +
           "<dt>Motivo</dt><dd>" + esc(c.motivo) + "</dd>" +
-          "</dl>" + htmlPlan(c.plan);
+          "</dl>" + htmlDistancia(c.distancia_km, c.distancia_fuente) + htmlPlan(c.plan);
       } else if (status === 404) {
         caja.innerHTML = '<div class="alerta aviso">No existe el folio <b>' + esc(folio) + "</b>.</div>";
       } else {

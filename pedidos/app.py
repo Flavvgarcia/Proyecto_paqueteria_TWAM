@@ -35,7 +35,9 @@ CONEXION = (
 
 
 # Columnas que se devuelven al cliente. La fecha sale en hora de México y en texto legible.
+# La distancia vive dentro del paquete (JSONB): "->" la saca tal cual (número o null).
 COLUMNAS = """folio, medio, motivo, modelo, plan_b, estado, plan,
+    paquete->'distancia_km' AS distancia_km, paquete->>'distancia_fuente' AS distancia_fuente,
     to_char(creado_en AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI:SS') AS creado_en"""
 
 
@@ -81,6 +83,15 @@ class DestinoInvalido(Exception):
     """rutas dijo que el destino no sirve (400): es un error del cliente, no se crea folio."""
 
 
+def leer_json(r):
+    """El cuerpo de la respuesta como dict. Si el otro servicio tronó y mandó HTML, {}."""
+    try:
+        cuerpo = r.json()
+    except ValueError:
+        return {}
+    return cuerpo if isinstance(cuerpo, dict) else {}
+
+
 def medir_distancia(destino):
     """Le pide a rutas los km por calle hasta el destino. Regresa (km, fuente, nota).
     Si rutas no responde, km = None. Si el destino es inválido, lanza DestinoInvalido."""
@@ -89,10 +100,12 @@ def medir_distancia(destino):
     except requests.RequestException as e:
         return None, None, f"rutas NO respondió al medir la distancia ({type(e).__name__})"
     if r.status_code == 400:
-        raise DestinoInvalido(r.json().get("error"))
+        raise DestinoInvalido(leer_json(r).get("error"))
     if r.status_code != 200:
         return None, None, f"rutas respondió {r.status_code} al medir la distancia"
-    d = r.json()
+    d = leer_json(r)
+    if "km" not in d:
+        return None, None, "rutas respondió algo inesperado al medir la distancia"
     return d["km"], d["fuente"], f"rutas midió {d['km']} km por calle ({d['fuente']})"
 
 
@@ -105,8 +118,8 @@ def pedir_plan(medio, destino):
     except requests.RequestException as e:
         return None, f"rutas NO respondió ({type(e).__name__}): pedido sin plan"
     if r.status_code != 200:
-        return None, f"rutas respondió {r.status_code}: {r.json().get('error')}"
-    plan = r.json()
+        return None, f"rutas respondió {r.status_code}: {leer_json(r).get('error')}"
+    plan = leer_json(r)
     datos = {c: plan.get(c) for c in ("km", "minutos", "indicacion", "fuente", "aviso")}
     return datos, f"rutas calculó el plan: {datos['minutos']} min ({datos['fuente']})"
 
@@ -118,13 +131,19 @@ def consultar_recomendar(paquete, modelo, recorrido):
     try:
         r = requests.post(f"{RECOMENDAR_URL}/sugerir", json=paquete, timeout=5)
     except requests.RequestException as e:
-        recorrido.append(f"recomendar NO respondió ({type(e).__name__}) → plan B")
+        falla = f"NO respondió ({type(e).__name__})"
+    else:
+        sugerencia = leer_json(r)
+        # Si respondió pero tronó por dentro (500 o sin "medio"), es como si no respondiera.
+        roto = r.status_code >= 500 or (r.status_code == 200 and "medio" not in sugerencia)
+        falla = f"falló por dentro (HTTP {r.status_code})" if roto else None
+    if falla:
+        recorrido.append(f"recomendar {falla} → plan B")
         pedido = {"folio": nuevo_folio(), "medio": MEDIO_POR_DEFECTO, "modelo": modelo,
                   "motivo": "recomendar no estuvo disponible; se asignó el medio por defecto",
                   "plan_b": True}
         return pedido, 503, None
 
-    sugerencia = r.json()
     if r.status_code != 200:
         recorrido.append(f"recomendar respondió {r.status_code}: {sugerencia.get('error')}")
         error = jsonify({"servicio": "pedidos", "error": "recomendar rechazó el paquete",
@@ -133,7 +152,7 @@ def consultar_recomendar(paquete, modelo, recorrido):
 
     recorrido.append(f"recomendar sugirió {sugerencia['medio']}")
     pedido = {"folio": nuevo_folio(), "medio": sugerencia["medio"],
-              "motivo": sugerencia["motivo"],
+              "motivo": sugerencia.get("motivo") or "sin motivo",
               "modelo": sugerencia.get("modelo", modelo), "plan_b": False,
               "preferido_por_modelo": sugerencia.get("preferido_por_modelo"),
               "corregido_por_reglas": sugerencia.get("corregido_por_reglas")}
@@ -193,6 +212,7 @@ def crear():
     recorrido = ["gateway recibió la petición", "pedidos recibió el paquete"]
 
     # 1) Distancia real: la mide rutas con el destino. El modelo decide con ella.
+    paquete.pop("distancia_fuente", None)  # la fuente la decide pedidos, no el cliente
     destino = paquete.get("destino")
     if destino:
         try:
@@ -235,9 +255,7 @@ def crear():
                         "recorrido": recorrido}), 503
     recorrido.append("pedidos guardó el pedido en la base")
 
-    respuesta = {**guardado, "servicio": "pedidos", "recorrido": recorrido,
-                 "distancia_km": paquete.get("distancia_km"),
-                 "distancia_fuente": paquete.get("distancia_fuente")}
+    respuesta = {**guardado, "servicio": "pedidos", "recorrido": recorrido}
     if not pedido["plan_b"]:
         respuesta["preferido_por_modelo"] = pedido["preferido_por_modelo"]
         respuesta["corregido_por_reglas"] = pedido["corregido_por_reglas"]
