@@ -7,6 +7,7 @@ POST /pedidos  -> mide la distancia real (rutas), pide el medio (recomendar) y e
                   inventa un folio y lo guarda
 GET  /pedidos  -> lista los pedidos guardados (los más recientes primero)
 GET  /pedidos/<folio> -> seguimiento de un pedido
+PATCH /pedidos/<folio> -> cambia el estado: {"estado": "en_camino"} (solo pasos permitidos)
 """
 import os
 import uuid
@@ -35,8 +36,22 @@ CONEXION = (
 
 
 # Columnas que se devuelven al cliente. La fecha sale en hora de México y en texto legible.
+# Ciclo de vida del pedido: desde cada estado, a cuáles se puede pasar.
+#   registrado -> en_camino -> entregado
+#        └────────────┴──────> cancelado
+TRANSICIONES = {
+    "registrado": ["en_camino", "cancelado"],
+    "en_camino": ["entregado", "cancelado"],
+    "entregado": [],   # estados finales: ya no cambian
+    "cancelado": [],
+}
+
+# Un evento del historial: {"estado": ..., "fecha": "2026-11-22 20:30:00"} (hora de México).
+EVENTO = """jsonb_build_object('estado', %s::text, 'fecha',
+    to_char(now() AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI:SS'))"""
+
 # La distancia vive dentro del paquete (JSONB): "->" la saca tal cual (número o null).
-COLUMNAS = """folio, medio, motivo, modelo, plan_b, estado, plan,
+COLUMNAS = """folio, medio, motivo, modelo, plan_b, estado, plan, historial,
     paquete->'distancia_km' AS distancia_km, paquete->>'distancia_fuente' AS distancia_fuente,
     to_char(creado_en AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI:SS') AS creado_en"""
 
@@ -64,6 +79,14 @@ def crear_tabla():
         """)
         # La tabla ya existía antes del plan: se le agrega la columna si le falta.
         conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS plan JSONB")
+        # Historial de estados. A los pedidos viejos se les pone su registro con la fecha original.
+        conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS historial JSONB NOT NULL DEFAULT '[]'")
+        conn.execute("""
+            UPDATE pedidos SET historial = jsonb_build_array(jsonb_build_object(
+                'estado', 'registrado',
+                'fecha', to_char(creado_en AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI:SS')))
+            WHERE historial = '[]'
+        """)
 
 
 def guardar(pedido, paquete):
@@ -71,12 +94,18 @@ def guardar(pedido, paquete):
     with conectar() as conn:
         return conn.execute(
             """
-            INSERT INTO pedidos (folio, medio, motivo, modelo, plan_b, paquete, plan)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO pedidos (folio, medio, motivo, modelo, plan_b, paquete, plan, historial)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, jsonb_build_array(""" + EVENTO + """))
             RETURNING """ + COLUMNAS,
             (pedido["folio"], pedido["medio"], pedido["motivo"], pedido["modelo"],
-             pedido["plan_b"], Jsonb(paquete), Jsonb(pedido["plan"]) if pedido["plan"] else None),
+             pedido["plan_b"], Jsonb(paquete), Jsonb(pedido["plan"]) if pedido["plan"] else None,
+             "registrado"),
         ).fetchone()
+
+
+def con_siguientes(pedido):
+    """Agrega a qué estados se puede pasar desde el actual (el front arma los botones con esto)."""
+    return {**pedido, "siguientes": TRANSICIONES.get(pedido["estado"], [])}
 
 
 class DestinoInvalido(Exception):
@@ -199,7 +228,39 @@ def seguimiento(folio):
         return jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible"}), 503
     if pedido is None:
         return jsonify({"servicio": "pedidos", "error": f"no existe el folio {folio}"}), 404
-    return jsonify(pedido)
+    return jsonify(con_siguientes(pedido))
+
+
+@app.patch("/pedidos/<folio>")
+def cambiar_estado(folio):
+    folio = folio.strip().upper()
+    datos = request.get_json(silent=True)
+    nuevo = datos.get("estado") if isinstance(datos, dict) else None
+    if nuevo not in TRANSICIONES:
+        return jsonify({"servicio": "pedidos", "error": f"estado desconocido: {nuevo}",
+                        "estados": list(TRANSICIONES)}), 400
+    try:
+        with conectar() as conn:
+            fila = conn.execute("SELECT estado FROM pedidos WHERE folio = %s", (folio,)).fetchone()
+            if fila is None:
+                return jsonify({"servicio": "pedidos", "error": f"no existe el folio {folio}"}), 404
+            actual = fila["estado"]
+            if nuevo not in TRANSICIONES.get(actual, []):
+                # 409 Conflict: la petición es válida, pero choca con el estado actual del pedido.
+                return jsonify({"servicio": "pedidos", "estado": actual,
+                                "error": f"no se puede pasar de {actual} a {nuevo}",
+                                "siguientes": TRANSICIONES.get(actual, [])}), 409
+            # "AND estado = actual": si alguien lo cambió justo antes, no se pisa su cambio.
+            pedido = conn.execute(
+                "UPDATE pedidos SET estado = %s, historial = historial || jsonb_build_array("
+                + EVENTO + ") WHERE folio = %s AND estado = %s RETURNING " + COLUMNAS,
+                (nuevo, nuevo, folio, actual),
+            ).fetchone()
+    except psycopg.Error:
+        return jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible"}), 503
+    if pedido is None:
+        return jsonify({"servicio": "pedidos", "error": "el pedido cambió mientras tanto; vuelve a consultarlo"}), 409
+    return jsonify(con_siguientes(pedido))
 
 
 @app.post("/pedidos")
@@ -255,7 +316,7 @@ def crear():
                         "recorrido": recorrido}), 503
     recorrido.append("pedidos guardó el pedido en la base")
 
-    respuesta = {**guardado, "servicio": "pedidos", "recorrido": recorrido}
+    respuesta = {**con_siguientes(guardado), "servicio": "pedidos", "recorrido": recorrido}
     if not pedido["plan_b"]:
         respuesta["preferido_por_modelo"] = pedido["preferido_por_modelo"]
         respuesta["corregido_por_reglas"] = pedido["corregido_por_reglas"]

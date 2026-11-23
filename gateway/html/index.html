@@ -156,7 +156,7 @@
     /* Resultado */
     .medio-grande { font-size: 2rem; font-weight: 700; text-transform: capitalize; margin: 0; }
     .fila { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
-    .insignia { font-size: .78rem; padding: 3px 9px; border-radius: 999px; background: var(--acento-suave); color: var(--acento); }
+    .insignia { white-space: nowrap; font-size: .78rem; padding: 3px 9px; border-radius: 999px; background: var(--acento-suave); color: var(--acento); }
     .insignia.aviso { background: var(--aviso-suave); color: var(--aviso); }
     .insignia.error { background: var(--error-suave); color: var(--error); }
     .insignia.ok { background: var(--ok-suave); color: var(--ok); }
@@ -198,6 +198,22 @@
     .buscador input { flex: 1; text-transform: uppercase; }
     .buscador input::placeholder { text-transform: none; }
     .buscador .boton { width: auto; padding: 8px 16px; }
+    .acciones { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .acciones button {
+      font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer;
+      padding: 7px 14px; border-radius: 8px;
+      border: 1px solid var(--acento); background: var(--acento-suave); color: var(--acento);
+    }
+    .acciones button.peligro { border-color: var(--error); background: var(--error-suave); color: var(--error); }
+    .acciones button:disabled { opacity: .6; cursor: wait; }
+    .historial { list-style: none; margin: 14px 0 0; padding: 0 0 0 4px; font-size: .85rem; }
+    .historial li { position: relative; padding: 0 0 10px 20px; border-left: 2px solid var(--borde); }
+    .historial li:last-child { border-left-color: transparent; }
+    .historial li::before {
+      content: ""; position: absolute; left: -6px; top: 4px;
+      width: 10px; height: 10px; border-radius: 50%; background: var(--acento);
+    }
+    .historial .fecha { color: var(--suave); margin-left: 6px; }
     dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 14px 0 0; font-size: .9rem; }
     dt { color: var(--suave); }
     dd { margin: 0; }
@@ -531,6 +547,57 @@
       buscarFolio(document.getElementById("folio").value);
     });
 
+    // Estados del pedido: texto e insignia de cada uno, y el texto del botón para llegar a él.
+    const ESTADOS = {
+      registrado: { texto: "registrado", clase: "", boton: "" },
+      en_camino: { texto: "en camino", clase: "aviso", boton: "Marcar en camino" },
+      entregado: { texto: "entregado", clase: "ok", boton: "Marcar entregado" },
+      cancelado: { texto: "cancelado", clase: "error", boton: "Cancelar pedido" },
+    };
+    function htmlEstado(estado) {
+      const e = ESTADOS[estado] || { texto: estado, clase: "" };
+      return '<span class="insignia ' + e.clase + '">' + esc(e.texto) + "</span>";
+    }
+
+    function mostrarSeguimiento(c) {
+      const historial = (c.historial || []).map((h) =>
+        "<li>" + htmlEstado(h.estado) + '<span class="fecha">' + esc(h.fecha) + "</span></li>").join("");
+      const botones = (c.siguientes || []).map((s) =>
+        '<button type="button" data-estado="' + esc(s) + '"' + (s === "cancelado" ? ' class="peligro"' : "") + ">" +
+        esc((ESTADOS[s] || {}).boton || s) + "</button>").join("");
+      document.getElementById("seguimiento").innerHTML =
+        "<dl>" +
+        "<dt>Estado</dt><dd>" + htmlEstado(c.estado) + "</dd>" +
+        "<dt>Medio</dt><dd><b>" + esc(c.medio) + "</b>" + (c.plan_b ? ' <span class="insignia error">plan B</span>' : "") + "</dd>" +
+        "<dt>Modelo</dt><dd>" + esc(c.modelo) + "</dd>" +
+        "<dt>Registrado</dt><dd>" + esc(c.creado_en) + "</dd>" +
+        "<dt>Motivo</dt><dd>" + esc(c.motivo) + "</dd>" +
+        "</dl>" + htmlDistancia(c.distancia_km, c.distancia_fuente) + htmlPlan(c.plan) +
+        (botones ? '<div class="acciones" data-folio="' + esc(c.folio) + '">' + botones + "</div>" : "") +
+        (historial ? '<ol class="historial">' + historial + "</ol>" : "");
+    }
+
+    // Botones de estado: PATCH /pedidos/<folio> con el estado nuevo.
+    document.getElementById("seguimiento").addEventListener("click", async (ev) => {
+      const boton = ev.target.closest("button[data-estado]");
+      if (!boton) return;
+      const folio = boton.parentElement.dataset.folio;
+      boton.parentElement.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+      const { status, cuerpo } = await llamar("/pedidos/" + encodeURIComponent(folio), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ estado: boton.dataset.estado }),
+      });
+      if (status === 200 && cuerpo) {
+        mostrarSeguimiento(cuerpo);
+        mostrarToast("Pedido " + folio + ": " + (ESTADOS[cuerpo.estado] || {}).texto, true);
+        cargarRecientes();
+      } else {
+        mostrarToast((cuerpo && cuerpo.error) || "No se pudo cambiar el estado (HTTP " + status + ")", false);
+        buscarFolio(folio);  // vuelve a pintar con el estado real
+      }
+    });
+
     async function buscarFolio(folio) {
       folio = folio.trim().toUpperCase();
       document.getElementById("folio").value = folio;
@@ -538,14 +605,7 @@
       if (!folio) return;
       const { status, cuerpo: c } = await llamar("/pedidos/" + encodeURIComponent(folio));
       if (status === 200 && c) {
-        caja.innerHTML =
-          "<dl>" +
-          "<dt>Estado</dt><dd><span class=\"insignia ok\">" + esc(c.estado) + "</span></dd>" +
-          "<dt>Medio</dt><dd><b>" + esc(c.medio) + "</b>" + (c.plan_b ? ' <span class="insignia error">plan B</span>' : "") + "</dd>" +
-          "<dt>Modelo</dt><dd>" + esc(c.modelo) + "</dd>" +
-          "<dt>Registrado</dt><dd>" + esc(c.creado_en) + "</dd>" +
-          "<dt>Motivo</dt><dd>" + esc(c.motivo) + "</dd>" +
-          "</dl>" + htmlDistancia(c.distancia_km, c.distancia_fuente) + htmlPlan(c.plan);
+        mostrarSeguimiento(c);
       } else if (status === 404) {
         caja.innerHTML = '<div class="alerta aviso">No existe el folio <b>' + esc(folio) + "</b>.</div>";
       } else {
@@ -569,10 +629,10 @@
       const filas = cuerpo.slice(0, 8).map((p) =>
         "<tr><td><button type=\"button\" data-folio=\"" + esc(p.folio) + "\">" + esc(p.folio) + "</button></td>" +
         "<td>" + esc(p.medio) + (p.plan_b ? ' <span class="insignia error">B</span>' : "") + "</td>" +
-        "<td>" + esc(p.modelo) + "</td>" +
+        "<td>" + htmlEstado(p.estado) + "</td>" +
         "<td>" + (p.plan ? esc(p.plan.minutos) + " min" : "—") + "</td>" +
         "<td>" + esc(p.creado_en) + "</td></tr>").join("");
-      caja.innerHTML = "<table><thead><tr><th>Folio</th><th>Medio</th><th>Modelo</th><th>Tiempo</th><th>Fecha</th></tr></thead>" +
+      caja.innerHTML = "<table><thead><tr><th>Folio</th><th>Medio</th><th>Estado</th><th>Tiempo</th><th>Fecha</th></tr></thead>" +
                        "<tbody>" + filas + "</tbody></table>";
     }
 
