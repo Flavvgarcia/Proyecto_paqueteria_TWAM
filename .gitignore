@@ -1,9 +1,8 @@
-.venv/
 __pycache__/
 *.pyc
 db.sqlite3
 .vscode/
-
+.env
 # 51 MB: muy pesado para GitHub y para cargarlo en cada copia.
 # Sin este archivo, el formulario lo muestra como "aún no entrenado".
 entregas/modelo/modelo_bosque.joblib
