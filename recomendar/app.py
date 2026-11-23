@@ -105,11 +105,17 @@ def sugerir():
     })
 
 
-if __name__ == "__main__":
-    # Cargar los modelos al arrancar, para que la primera petición no sea lenta.
+def precargar():
+    """Carga los modelos al arrancar, para que la primera petición no sea lenta."""
     for model in MODELOS:
         try:
             cargar_modelo(model)
         except FileNotFoundError as e:
             print("Aviso:", e)
-    app.run(host="0.0.0.0", port=8002)
+
+
+# En Docker arranca gunicorn (ver gunicorn.conf.py, que llama a precargar).
+# "python app.py" queda para probar en tu compu sin Docker.
+if __name__ == "__main__":
+    precargar()
+    app.run(host="0.0.0.0", port=8002)

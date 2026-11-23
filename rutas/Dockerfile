@@ -5,4 +5,5 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 EXPOSE 8003
-CMD ["python", "app.py"]
+# gunicorn: servidor de producción (varios procesos). Su configuración está en gunicorn.conf.py
+CMD ["gunicorn", "app:app"]

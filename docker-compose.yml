@@ -13,13 +13,15 @@ services:
   db-pedidos:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: pedidos
-      POSTGRES_USER: pedidos
-      POSTGRES_PASSWORD: pedidos
+      # Del .env. ":?" = si falta la contraseña, Compose se niega a arrancar (con este mensaje).
+      POSTGRES_DB: ${POSTGRES_DB:-pedidos}
+      POSTGRES_USER: ${POSTGRES_USER:-pedidos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en el archivo .env}
     volumes:
       - datos-pedidos:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pedidos -d pedidos"]
+      # $$ = un "$" que lee el contenedor (no Compose)
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 2s
       retries: 30
 
@@ -29,9 +31,9 @@ services:
       RECOMENDAR_URL: http://recomendar:8002
       RUTAS_URL: http://rutas:8003
       POSTGRES_HOST: db-pedidos
-      POSTGRES_DB: pedidos
-      POSTGRES_USER: pedidos
-      POSTGRES_PASSWORD: pedidos
+      POSTGRES_DB: ${POSTGRES_DB:-pedidos}
+      POSTGRES_USER: ${POSTGRES_USER:-pedidos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en el archivo .env}
     depends_on:
       rutas:
         condition: service_started
@@ -54,4 +56,4 @@ services:
       - rutas
 
 volumes:
-  datos-pedidos:
+  datos-pedidos:

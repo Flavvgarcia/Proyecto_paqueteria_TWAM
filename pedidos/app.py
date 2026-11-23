@@ -29,12 +29,15 @@ RUTAS_URL = os.environ.get("RUTAS_URL", "http://localhost:8003")
 MEDIO_POR_DEFECTO = "camioneta"
 
 # Datos de conexión a la base. En Compose, POSTGRES_HOST vale "db-pedidos".
-CONEXION = (
-    f"host={os.environ.get('POSTGRES_HOST', 'localhost')} "
-    f"dbname={os.environ.get('POSTGRES_DB', 'pedidos')} "
-    f"user={os.environ.get('POSTGRES_USER', 'pedidos')} "
-    f"password={os.environ.get('POSTGRES_PASSWORD', 'pedidos')}"
-)
+# La contraseña NO tiene valor por defecto en el código: viene del .env (vía Compose).
+# Van como parámetros separados (no en un solo texto) para que una contraseña con
+# espacios o comillas no rompa la conexión.
+CONEXION = {
+    "host": os.environ.get("POSTGRES_HOST", "localhost"),
+    "dbname": os.environ.get("POSTGRES_DB", "pedidos"),
+    "user": os.environ.get("POSTGRES_USER", "pedidos"),
+    "password": os.environ.get("POSTGRES_PASSWORD", ""),
+}
 
 
 # Columnas que se devuelven al cliente. La fecha sale en hora de México y en texto legible.
@@ -60,7 +63,7 @@ COLUMNAS = """folio, medio, motivo, modelo, plan_b, estado, plan, historial,
 
 def conectar():
     """Abre una conexión nueva. Devuelve las filas como diccionarios."""
-    return psycopg.connect(CONEXION, row_factory=dict_row, connect_timeout=3)
+    return psycopg.connect(**CONEXION, row_factory=dict_row, connect_timeout=3)
 
 
 def crear_tabla():
@@ -333,6 +336,8 @@ def crear():
     return jsonify(respuesta), codigo
 
 
+# En Docker arranca gunicorn (ver gunicorn.conf.py, que también llama a crear_tabla).
+# "python app.py" queda para probar en tu compu sin Docker.
 if __name__ == "__main__":
     crear_tabla()
     app.run(host="0.0.0.0", port=8001)
