@@ -3,13 +3,16 @@ Servicio PEDIDOS: crea el pedido. NO carga el modelo: le pregunta a recomendar p
 Los pedidos se guardan en PostgreSQL (su propia base, solo de este servicio).
 
 GET  /salud    -> quién es, a qué URL llama y si la base responde
-POST /pedidos  -> mide la distancia real (rutas), pide el medio (recomendar) y el plan (rutas),
+POST /pedidos  -> (con encabezado opcional Idempotency-Key) mide la distancia real (rutas), pide el medio (recomendar) y el plan (rutas),
                   inventa un folio y lo guarda
 GET  /pedidos  -> lista los pedidos guardados (los más recientes primero)
 GET  /pedidos/<folio> -> seguimiento de un pedido
 PATCH /pedidos/<folio> -> cambia el estado: {"estado": "en_camino"} (solo pasos permitidos)
 """
+import hashlib
+import json
 import os
+import re
 import uuid
 
 import psycopg
@@ -29,6 +32,11 @@ id_peticion.instalar(app, "pedidos")
 RECOMENDAR_URL = os.environ.get("RECOMENDAR_URL", "http://localhost:8002")
 RUTAS_URL = os.environ.get("RUTAS_URL", "http://localhost:8003")
 MEDIO_POR_DEFECTO = "camioneta"
+
+# Idempotency-Key: la manda el cliente (un UUID por cada intento de crear un pedido).
+# Si la misma clave llega dos veces (doble clic, reintento por red lenta), NO se crea
+# otro pedido: se regresa el primero.
+CLAVE_VALIDA = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 
 # Datos de conexión a la base. En Compose, POSTGRES_HOST vale "db-pedidos".
 # La contraseña NO tiene valor por defecto en el código: viene del .env (vía Compose).
@@ -86,6 +94,11 @@ def crear_tabla():
         """)
         # La tabla ya existía antes del plan: se le agrega la columna si le falta.
         conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS plan JSONB")
+        # Idempotencia: la clave que mandó el cliente y la "huella" del paquete que mandó con ella.
+        # UNIQUE: la base garantiza que una clave no pueda guardarse dos veces, aunque
+        # dos peticiones iguales lleguen al mismo tiempo.
+        conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS clave_idempotencia VARCHAR(64) UNIQUE")
+        conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS huella CHAR(64)")
         # Historial de estados. A los pedidos viejos se les pone su registro con la fecha original.
         conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS historial JSONB NOT NULL DEFAULT '[]'")
         conn.execute("""
@@ -96,18 +109,49 @@ def crear_tabla():
         """)
 
 
-def guardar(pedido, paquete):
-    """Inserta el pedido y lo devuelve tal como quedó en la base."""
+def guardar(pedido, paquete, clave=None, huella=None):
+    """Inserta el pedido y lo devuelve tal como quedó en la base.
+    Si la clave de idempotencia ya existe, la base lanza UniqueViolation."""
     with conectar() as conn:
         return conn.execute(
             """
-            INSERT INTO pedidos (folio, medio, motivo, modelo, plan_b, paquete, plan, historial)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, jsonb_build_array(""" + EVENTO + """))
+            INSERT INTO pedidos (folio, medio, motivo, modelo, plan_b, paquete, plan, historial,
+                                 clave_idempotencia, huella)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, jsonb_build_array(""" + EVENTO + """), %s, %s)
             RETURNING """ + COLUMNAS,
             (pedido["folio"], pedido["medio"], pedido["motivo"], pedido["modelo"],
              pedido["plan_b"], Jsonb(paquete), Jsonb(pedido["plan"]) if pedido["plan"] else None,
-             "registrado"),
+             "registrado", clave, huella),
         ).fetchone()
+
+
+def buscar_por_clave(clave):
+    """El pedido que ya se creó con esta clave (con su huella), o None."""
+    with conectar() as conn:
+        return conn.execute(
+            "SELECT " + COLUMNAS + ", huella FROM pedidos WHERE clave_idempotencia = %s", (clave,)
+        ).fetchone()
+
+
+def huella_de(cuerpo):
+    """Resumen (SHA-256) del paquete tal como llegó. Mismo paquete -> misma huella."""
+    texto = json.dumps(cuerpo, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(texto.encode("utf-8")).hexdigest()
+
+
+def responder_repetido(previo, huella, recorrido):
+    """La clave ya se había usado: se regresa el pedido original (o 422 si el paquete es otro)."""
+    huella_original = previo.pop("huella")
+    if huella_original != huella:
+        recorrido.append("la clave ya se usó con OTRO paquete: no se crea nada")
+        id_peticion.log(f"clave repetida con otro paquete (folio original {previo['folio']})")
+        return jsonify({"servicio": "pedidos",
+                        "error": "esta Idempotency-Key ya se usó con un paquete distinto",
+                        "folio": previo["folio"], "recorrido": recorrido}), 422
+    recorrido.append(f"pedido repetido: ya existía el folio {previo['folio']}; no se creó otro")
+    id_peticion.log(f"folio={previo['folio']} repetido (misma Idempotency-Key)")
+    return jsonify({**con_siguientes(previo), "servicio": "pedidos", "repetido": True,
+                    "recorrido": recorrido}), 200
 
 
 def con_siguientes(pedido):
@@ -270,24 +314,41 @@ def cambiar_estado(folio):
         return jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible"}), 503
     if pedido is None:
         return jsonify({"servicio": "pedidos", "error": "el pedido cambió mientras tanto; vuelve a consultarlo"}), 409
+    id_peticion.log(f"folio={folio} cambió de {actual} a {nuevo}")
     return jsonify(con_siguientes(pedido))
 
 
 @app.post("/pedidos")
 def crear():
-    paquete = request.get_json(silent=True)
-    if not isinstance(paquete, dict):
+    cuerpo = request.get_json(silent=True)
+    if not isinstance(cuerpo, dict):
         return jsonify({"servicio": "pedidos", "error": "el cuerpo debe ser JSON"}), 400
 
     recorrido = ["gateway recibió la petición", "pedidos recibió el paquete"]
 
     # 0) Validar campo por campo. Con un dato mal no se llama a nadie ni se crea folio.
-    paquete, errores = validar(paquete)
+    paquete, errores = validar(cuerpo)
     if errores:
         recorrido.append(f"pedidos rechazó el paquete: {len(errores)} campo(s) con error")
         return jsonify({"servicio": "pedidos", "error": "hay datos inválidos",
                         "errores": errores, "recorrido": recorrido}), 400
     recorrido.append("pedidos validó el paquete")
+
+    # 0.5) Idempotencia: si esta clave ya creó un pedido, se regresa ese y no se llama a nadie.
+    clave = request.headers.get("Idempotency-Key")
+    huella = None
+    if clave is not None:
+        if not CLAVE_VALIDA.match(clave):
+            return jsonify({"servicio": "pedidos",
+                            "error": "Idempotency-Key inválida (8 a 64 letras, números o guiones)"}), 400
+        huella = huella_de(cuerpo)
+        try:
+            previo = buscar_por_clave(clave)
+        except psycopg.Error:
+            return jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible",
+                            "recorrido": recorrido}), 503
+        if previo:
+            return responder_repetido(previo, huella, recorrido)
     modelo = paquete.get("modelo") or "arbol"
 
     # 1) Distancia real: la mide rutas con el destino. El modelo decide con ella.
@@ -327,12 +388,21 @@ def crear():
 
     # 4) Guardar en la base. Si la base no responde, error claro (no se inventa un folio).
     try:
-        guardado = guardar(pedido, paquete)
+        guardado = guardar(pedido, paquete, clave, huella)
+    except psycopg.errors.UniqueViolation:
+        # Dos peticiones con la misma clave llegaron al mismo tiempo y la otra guardó primero:
+        # la base no dejó duplicar. Se regresa el pedido que sí se guardó.
+        previo = buscar_por_clave(clave) if clave else None
+        if previo is None:
+            raise
+        return responder_repetido(previo, huella, recorrido)
     except psycopg.Error:
         recorrido.append("la base de datos NO respondió: el pedido no se guardó")
         return jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible",
                         "recorrido": recorrido}), 503
     recorrido.append("pedidos guardó el pedido en la base")
+    id_peticion.log(f"folio={guardado['folio']} creado: {guardado['medio']}"
+                    + (" (plan B)" if pedido["plan_b"] else ""))
 
     respuesta = {**con_siguientes(guardado), "servicio": "pedidos", "recorrido": recorrido}
     if not pedido["plan_b"]:

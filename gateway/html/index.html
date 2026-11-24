@@ -490,6 +490,15 @@
     }
 
     // ---------- Crear pedido ----------
+    // Idempotency-Key: una clave por cada INTENTO de crear un pedido. Si no hubo respuesta
+    // clara (sin red, 502/504 del gateway), el siguiente clic reusa la misma clave: si el
+    // pedido sí se creó, pedidos regresa ese mismo en lugar de crear otro.
+    let claveIdempotencia = null;
+    function nuevaClave() {
+      if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+      return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);  // sin HTTPS
+    }
+
     formPedido.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const boton = document.getElementById("btn-crear");
@@ -507,14 +516,17 @@
       limpiarErrores();
       boton.disabled = true;
       boton.textContent = "Enviando…";
+      if (!claveIdempotencia) claveIdempotencia = nuevaClave();
       const { status, cuerpo, id } = await llamar("/pedidos", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": claveIdempotencia },
         body: JSON.stringify(datos),
       });
       boton.disabled = false;
       boton.textContent = "Crear pedido";
 
+      // Respuesta definitiva (hay folio, o pedidos rechazó el paquete): el próximo envío es otro pedido.
+      if (cuerpo && (cuerpo.folio || (status >= 400 && status < 500))) claveIdempotencia = null;
       mostrarResultado(status, cuerpo, id);
       cargarRecientes();
     });
@@ -557,6 +569,7 @@
           insignias.push('<span class="insignia aviso">corregido por reglas: el modelo prefería ' + esc(c.preferido_por_modelo) + "</span>");
         }
         if (c.plan_b) insignias.push('<span class="insignia error">plan B</span>');
+        if (c.repetido) insignias.push('<span class="insignia aviso">repetido: no se creó otro pedido</span>');
         html += '<p class="vacio">Folio <span class="folio">' + esc(c.folio) + "</span></p>";
         html += '<p class="medio-grande">' + esc(c.medio) + "</p>";
         html += '<div class="fila">' + insignias.join("") + "</div>";

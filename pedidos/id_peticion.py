@@ -18,10 +18,13 @@ from flask import g, request
 
 # Solo se acepta un ID "limpio": evita que alguien meta saltos de línea o texto raro en los logs.
 ID_VALIDO = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+SERVICIO = "?"
 
 
 def instalar(app, servicio):
     """Registra en la app lo que pasa antes y después de cada petición."""
+    global SERVICIO
+    SERVICIO = servicio
 
     @app.before_request
     def tomar_id():
@@ -39,6 +42,11 @@ def instalar(app, servicio):
             print(f"[{servicio}] id={id_peticion} {request.method} {request.path} "
                   f"-> {respuesta.status_code} ({ms:.0f} ms)", flush=True)
         return respuesta
+
+
+def log(mensaje):
+    """Escribe una línea en el log con el ID de la petición actual, p. ej. el folio creado."""
+    print(f"[{SERVICIO}] id={g.get('id_peticion', '-')} {mensaje}", flush=True)
 
 
 def cabeceras():

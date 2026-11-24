@@ -108,13 +108,30 @@ def sugerir():
     })
 
 
+# Paquete de ejemplo (el de paquete.json) para "calentar" cada modelo al arrancar.
+EJEMPLO = {
+    "distancia_km": 3.94, "peso_kg": 0.31, "largo_cm": 11.7, "ancho_cm": 7.6, "alto_cm": 10.6,
+    "volumen_l": 0.94, "fragil": 0, "refrigerado": 0, "valor_declarado_mxn": 4603,
+    "hora_salida": 3, "prioridad": "mismo_dia", "zona_destino": "periferia",
+    "clima": "despejado", "trafico": "medio",
+}
+
+
 def precargar():
-    """Carga los modelos al arrancar, para que la primera petición no sea lenta."""
+    """Carga los modelos al arrancar y hace una predicción de prueba con cada uno.
+    Cargar el archivo no basta: scikit-learn termina de prepararse en la PRIMERA
+    predicción (~2 s). Así esa espera ocurre aquí y no en el primer pedido de un cliente."""
     for model in MODELOS:
         try:
-            cargar_modelo(model)
+            modelo = cargar_modelo(model)
         except FileNotFoundError as e:
             print("Aviso:", e)
+            continue
+        try:
+            modelo.predict_proba(pd.DataFrame([EJEMPLO], columns=CAMPOS))
+            print(f"Modelo {model} listo (calentado)", flush=True)
+        except Exception as e:  # el calentamiento nunca debe impedir que el servicio arranque
+            print(f"Aviso: no se pudo calentar {model}: {e}", flush=True)
 
 
 # En Docker arranca gunicorn (ver gunicorn.conf.py, que llama a precargar).
