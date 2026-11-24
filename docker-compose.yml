@@ -34,6 +34,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-pedidos}
       POSTGRES_USER: ${POSTGRES_USER:-pedidos}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en el archivo .env}
+      # Clave para cambiar estados
+      OPERADOR_CLAVE: ${OPERADOR_CLAVE:-}
     depends_on:
       rutas:
         condition: service_started
@@ -56,4 +58,4 @@ services:
       - rutas
 
 volumes:
-  datos-pedidos:
+  datos-pedidos:

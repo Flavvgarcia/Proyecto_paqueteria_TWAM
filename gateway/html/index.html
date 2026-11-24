@@ -214,6 +214,13 @@
     .buscador input { flex: 1; text-transform: uppercase; }
     .buscador input::placeholder { text-transform: none; }
     .buscador .boton { width: auto; padding: 8px 16px; }
+    /* Modo operador */
+    .operador { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; font-size: .82rem; color: var(--suave); }
+    .operador form { display: flex; gap: 8px; flex: 1; min-width: 0; }
+    .operador input { flex: 1; min-width: 0; padding: 6px 10px; }
+    .enlace { background: none; border: 0; padding: 0; font: inherit; color: var(--acento); cursor: pointer; text-decoration: underline; }
+    .operador .boton { width: auto; padding: 6px 12px; font-size: .82rem; }
+    .solo-operador { margin-top: 12px; font-size: .8rem; color: var(--suave); }
     .acciones { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
     .acciones button {
       font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer;
@@ -413,6 +420,7 @@
           <input id="folio" placeholder="Folio, p. ej. A1B2C3D4" maxlength="12" required aria-label="Folio">
           <button class="boton" type="submit">Buscar</button>
         </form>
+        <div class="operador" id="operador"></div>
         <div id="seguimiento" aria-live="polite"></div>
       </section>
 
@@ -663,7 +671,9 @@
         "<dt>Motivo</dt><dd>" + esc(c.motivo) + "</dd>" +
         "<dt>Tarifa</dt><dd>" + (c.tarifa ? "<b>$" + esc(c.tarifa.total) + " " + esc(c.tarifa.moneda) + "</b>" : "—") + "</dd>" +
         "</dl>" + htmlDistancia(c.distancia_km, c.distancia_fuente) + htmlPlan(c.plan) + htmlTarifa(c.tarifa) +
-        (botones ? '<div class="acciones" data-folio="' + esc(c.folio) + '">' + botones + "</div>" : "") +
+        (!botones ? "" : claveOperador
+          ? '<div class="acciones" data-folio="' + esc(c.folio) + '">' + botones + "</div>"
+          : '<p class="solo-operador">Solo un operador puede cambiar el estado.</p>') +
         (historial ? '<ol class="historial">' + historial + "</ol>" : "");
     }
 
@@ -675,9 +685,19 @@
       boton.parentElement.querySelectorAll("button").forEach((b) => { b.disabled = true; });
       const { status, cuerpo } = await llamar("/pedidos/" + encodeURIComponent(folio), {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + claveOperador },
         body: JSON.stringify({ estado: boton.dataset.estado }),
       });
+      if (status === 401 || status === 403) {
+        salirOperador();  // la clave ya no sirve (p. ej. la cambiaron en el .env)
+        mostrarToast("La clave de operador ya no es válida. Vuelve a entrar.", false);
+        return;
+      }
+      if (status === 429) {
+        mostrarToast("Demasiados intentos. Espera un minuto.", false);
+        buscarFolio(folio);
+        return;
+      }
       if (status === 200 && cuerpo) {
         mostrarSeguimiento(cuerpo);
         mostrarToast("Pedido " + folio + ": " + (ESTADOS[cuerpo.estado] || {}).texto, true);
@@ -687,6 +707,55 @@
         buscarFolio(folio);  // vuelve a pintar con el estado real
       }
     });
+
+    // ---------- Modo operador ----------
+    // La clave se guarda en sessionStorage: se olvida al cerrar la pestaña.
+    let claveOperador = null;
+    try { claveOperador = sessionStorage.getItem("claveOperador"); } catch (e) { /* sin almacenamiento */ }
+
+    function pintarOperador(mostrarFormulario) {
+      const caja = document.getElementById("operador");
+      if (claveOperador) {
+        caja.innerHTML = '<span class="insignia ok">modo operador</span><button type="button" class="enlace" id="salir-operador">Salir</button>';
+      } else if (mostrarFormulario) {
+        caja.innerHTML = '<form id="form-operador"><input type="password" id="clave-operador" placeholder="Clave de operador" ' +
+          'autocomplete="current-password" required aria-label="Clave de operador"><button class="boton" type="submit">Entrar</button></form>';
+        document.getElementById("clave-operador").focus();
+      } else {
+        caja.innerHTML = '<button type="button" class="enlace" id="entrar-operador">Soy operador</button>';
+      }
+    }
+    function repintarSeguimiento() {
+      const folio = document.getElementById("folio").value;
+      if (document.getElementById("seguimiento").innerHTML && folio) buscarFolio(folio);
+    }
+    function salirOperador() {
+      claveOperador = null;
+      try { sessionStorage.removeItem("claveOperador"); } catch (e) { /* nada */ }
+      pintarOperador(false);
+      repintarSeguimiento();
+    }
+    document.getElementById("operador").addEventListener("click", (ev) => {
+      if (ev.target.id === "entrar-operador") pintarOperador(true);
+      if (ev.target.id === "salir-operador") salirOperador();
+    });
+    document.getElementById("operador").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const clave = document.getElementById("clave-operador").value;
+      const { status } = await llamar("/operador", { headers: { Authorization: "Bearer " + clave } });
+      if (status === 200) {
+        claveOperador = clave;
+        try { sessionStorage.setItem("claveOperador", clave); } catch (e) { /* solo en memoria */ }
+        pintarOperador(false);
+        mostrarToast("Modo operador activado", true);
+        repintarSeguimiento();
+      } else {
+        const mensajes = { 403: "Clave incorrecta", 429: "Demasiados intentos. Espera un minuto.",
+                           503: "El servidor no tiene clave de operador configurada (.env)" };
+        mostrarToast(mensajes[status] || "No se pudo comprobar la clave (HTTP " + status + ")", false);
+      }
+    });
+    pintarOperador(false);
 
     async function buscarFolio(folio) {
       folio = folio.trim().toUpperCase();

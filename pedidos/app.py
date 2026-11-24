@@ -8,8 +8,11 @@ POST /pedidos  -> (con encabezado opcional Idempotency-Key) mide la distancia re
 GET  /pedidos  -> lista los pedidos guardados (los más recientes primero)
 GET  /pedidos/<folio> -> seguimiento de un pedido
 PATCH /pedidos/<folio> -> cambia el estado: {"estado": "en_camino"} (solo pasos permitidos)
+                          SOLO operadores: encabezado "Authorization: Bearer <OPERADOR_CLAVE>"
+GET  /operador -> comprueba la clave de operador (para el "modo operador" de la página)
 """
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -38,6 +41,29 @@ MEDIO_POR_DEFECTO = "camioneta"
 # Si la misma clave llega dos veces (doble clic, reintento por red lenta), NO se crea
 # otro pedido: se regresa el primero.
 CLAVE_VALIDA = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+
+# Clave de operador (del .env). Ver el seguimiento es público; CAMBIAR el estado no.
+# Si no hay clave configurada, nadie puede cambiar estados (seguro por defecto).
+OPERADOR_CLAVE = os.environ.get("OPERADOR_CLAVE", "")
+
+
+def revisar_operador():
+    """None si la petición trae la clave de operador correcta; si no, la respuesta de error.
+      401 = no mandó credencial   403 = la mandó, pero no es válida"""
+    if not OPERADOR_CLAVE:
+        return jsonify({"servicio": "pedidos",
+                        "error": "no hay OPERADOR_CLAVE configurada: el cambio de estado está deshabilitado"}), 503
+    encabezado = request.headers.get("Authorization", "")
+    if not encabezado.startswith("Bearer "):
+        respuesta = jsonify({"servicio": "pedidos", "error": "solo un operador puede hacer esto: falta la clave"})
+        respuesta.headers["WWW-Authenticate"] = "Bearer"
+        return respuesta, 401
+    # compare_digest tarda lo mismo acierte o falle: no deja adivinar la clave letra por letra
+    # midiendo cuánto tarda la respuesta.
+    if not hmac.compare_digest(encabezado[len("Bearer "):].encode(), OPERADOR_CLAVE.encode()):
+        id_peticion.log("intento de operador con clave incorrecta")
+        return jsonify({"servicio": "pedidos", "error": "clave de operador incorrecta"}), 403
+    return None
 
 # Datos de conexión a la base. En Compose, POSTGRES_HOST vale "db-pedidos".
 # La contraseña NO tiene valor por defecto en el código: viene del .env (vía Compose).
@@ -289,8 +315,18 @@ def seguimiento(folio):
     return jsonify(con_siguientes(pedido))
 
 
+@app.get("/operador")
+def operador():
+    """La página la usa para saber si la clave que escribió el operador es buena."""
+    error = revisar_operador()
+    return error or jsonify({"servicio": "pedidos", "operador": True})
+
+
 @app.patch("/pedidos/<folio>")
 def cambiar_estado(folio):
+    error = revisar_operador()
+    if error:
+        return error
     folio = folio.strip().upper()
     datos = request.get_json(silent=True)
     nuevo = datos.get("estado") if isinstance(datos, dict) else None
