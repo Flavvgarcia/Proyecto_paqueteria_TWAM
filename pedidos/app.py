@@ -232,7 +232,9 @@ def pedir_plan(medio, destino):
     if r.status_code != 200:
         return None, f"rutas respondió {r.status_code}: {leer_json(r).get('error')}"
     plan = leer_json(r)
-    datos = {c: plan.get(c) for c in ("km", "minutos", "indicacion", "fuente", "aviso")}
+    # origen, destino y trazo: para dibujar el mapa de la ruta en la página.
+    datos = {c: plan.get(c) for c in ("km", "minutos", "indicacion", "fuente", "aviso",
+                                      "origen", "destino", "trazo")}
     return datos, f"rutas calculó el plan: {datos['minutos']} min ({datos['fuente']})"
 
 
@@ -297,6 +299,11 @@ def listar():
             ).fetchall()
     except psycopg.Error:
         return jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible"}), 503
+    # En la lista no hace falta el trazo del mapa (50 pedidos × cientos de puntos): se quita.
+    # Completo sigue en GET /pedidos/<folio>.
+    for fila in filas:
+        if fila["plan"]:
+            fila["plan"].pop("trazo", None)
     return jsonify(filas)
 
 

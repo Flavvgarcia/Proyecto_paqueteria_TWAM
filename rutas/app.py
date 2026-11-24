@@ -9,6 +9,7 @@ POST /plan      -> {"medio": "moto", "destino": {"lat": 19.70, "lng": -101.19}}
 """
 import math
 import os
+import re
 
 import requests
 from flask import Flask, jsonify, request
@@ -19,7 +20,10 @@ app = Flask(__name__)
 app.json.ensure_ascii = False  # acentos legibles en curl
 id_peticion.instalar(app, "rutas")
 
-ORS_URL = os.environ.get("ORS_URL", "https://api.openrouteservice.org")
+# ORS se mudó: api.openrouteservice.org quedó obsoleto (responde 410 "Deprecated") y se
+# apaga en noviembre de 2026. La dirección nueva es api.heigit.org/openrouteservice y
+# acepta la misma clave. "or": si ORS_URL viene vacía, se usa la nueva.
+ORS_URL = os.environ.get("ORS_URL") or "https://api.heigit.org/openrouteservice"
 ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
 ALMACEN = {
     # "or": si la variable no existe o viene vacía, se usa el TecNM Morelia
@@ -36,8 +40,50 @@ class ErrorRuta(Exception):
 # ---------------------------------------------------------------------------
 # Adapter: ORS habla en metros, segundos y JSON propio; nosotros en km y minutos.
 # ---------------------------------------------------------------------------
+MAX_PUNTOS = 300  # el trazo de una ruta larga puede traer miles de puntos: se recorta
+
+
+def simplificar(puntos):
+    """Se queda con ~MAX_PUNTOS puntos repartidos (siempre con el primero y el último)
+    y redondea a 5 decimales (~1 m): el mapa se ve igual y el pedido pesa mucho menos."""
+    if len(puntos) > MAX_PUNTOS:
+        paso = len(puntos) / (MAX_PUNTOS - 1)
+        puntos = [puntos[int(i * paso)] for i in range(MAX_PUNTOS - 1)] + [puntos[-1]]
+    return [[round(lat, 5), round(lng, 5)] for lat, lng in puntos]
+
+
+def decodificar_polyline(texto, precision=5):
+    """ORS (en formato JSON) manda el trazo comprimido como "encoded polyline" (el
+    algoritmo de Google): cada coordenada va como diferencia con la anterior, en grupos
+    de 5 bits convertidos a letras. Aquí se regresa a una lista de (lat, lng)."""
+    puntos, i, lat, lng = [], 0, 0, 0
+    factor = 10 ** precision
+    while i < len(texto):
+        deltas = []
+        for _ in range(2):                      # primero lat, luego lng
+            resultado, desplazamiento = 0, 0
+            while True:
+                b = ord(texto[i]) - 63
+                i += 1
+                resultado |= (b & 0x1F) << desplazamiento
+                desplazamiento += 5
+                if b < 0x20:                    # sin el bit de "continúa": fin del número
+                    break
+            deltas.append(~(resultado >> 1) if resultado & 1 else resultado >> 1)
+        lat += deltas[0]
+        lng += deltas[1]
+        puntos.append((lat / factor, lng / factor))
+    return puntos
+
+
+def linea_recta(origen, destino):
+    """Trazo de dos puntos: para el dron y para cuando ORS no responde."""
+    return [[origen["lat"], origen["lng"]], [destino["lat"], destino["lng"]]]
+
+
 class ClienteORS:
     def ruta(self, perfil, origen, destino):
+        """Regresa (km, minutos, trazo). trazo = [[lat, lng], ...] listo para Leaflet."""
         if not ORS_API_KEY:
             raise ErrorRuta("no hay ORS_API_KEY configurada")
         try:
@@ -51,13 +97,26 @@ class ClienteORS:
         except requests.RequestException as e:
             raise ErrorRuta(f"ORS no respondió ({type(e).__name__})")
         if r.status_code != 200:
-            raise ErrorRuta(f"ORS respondió {r.status_code}")
+            # Se incluye el motivo: ORS suele explicarlo en la respuesta. Si es una página
+            # HTML, basta con su título; si no, el inicio del texto.
+            titulo = re.search(r"<title>(.*?)</title>", r.text, re.S | re.I)
+            motivo = " ".join((titulo.group(1) if titulo else r.text[:120]).split())
+            raise ErrorRuta(f"ORS respondió {r.status_code}: {motivo}")
         try:
-            resumen = r.json()["routes"][0]["summary"]
-        except (ValueError, KeyError, IndexError):
+            ruta = r.json()["routes"][0]
+            resumen = ruta["summary"]
+        except (ValueError, KeyError, IndexError, TypeError):
             raise ErrorRuta("ORS respondió en un formato inesperado")
+        # El trazo viene comprimido (encoded polyline): se descomprime a [(lat, lng), ...],
+        # justo el orden que usa Leaflet. Traducir formatos es el trabajo del Adapter.
+        # Si el trazo no viene o no se puede leer, se dibuja línea recta, pero los km y
+        # minutos de ORS (lo importante) se conservan.
+        try:
+            trazo = simplificar(decodificar_polyline(ruta["geometry"]))
+        except (KeyError, IndexError, TypeError):
+            trazo = linea_recta(origen, destino)
         # Si origen y destino son el mismo punto, ORS manda el resumen vacío.
-        return resumen.get("distance", 0) / 1000, resumen.get("duration", 0) / 60  # km, minutos
+        return resumen.get("distance", 0) / 1000, resumen.get("duration", 0) / 60, trazo
 
 
 ors = ClienteORS()
@@ -76,7 +135,7 @@ def linea_recta_km(a, b):
 def distancia_por_calle(origen, destino):
     """Km por calle en auto (la "distancia_km" del dataset). Si ORS falla, estima."""
     try:
-        km, _ = ors.ruta("driving-car", origen, destino)
+        km, _, _ = ors.ruta("driving-car", origen, destino)
         return round(km, 2), "openrouteservice", None
     except ErrorRuta as e:
         return round(linea_recta_km(origen, destino) * FACTOR_CALLES, 2), "estimado", str(e)
@@ -95,14 +154,16 @@ class EntregaPorCalle:
 
     def planear(self, origen, destino):
         try:
-            km, minutos = ors.ruta(self.perfil, origen, destino)
+            km, minutos, trazo = ors.ruta(self.perfil, origen, destino)
             fuente, aviso = "openrouteservice", None
         except ErrorRuta as e:
             km = linea_recta_km(origen, destino) * FACTOR_CALLES
             minutos = km / self.velocidad_kmh * 60
+            trazo = linea_recta(origen, destino)   # el mapa la dibuja punteada
             fuente, aviso = "estimado", str(e)
         return {"km": round(km, 2), "minutos": round(minutos), "fuente": fuente,
-                "perfil": self.perfil, "indicacion": self.indicacion, "aviso": aviso}
+                "perfil": self.perfil, "indicacion": self.indicacion, "aviso": aviso,
+                "trazo": trazo}
 
 
 class EntregaDron:
@@ -114,7 +175,8 @@ class EntregaDron:
         km = linea_recta_km(origen, destino)
         return {"km": round(km, 2), "minutos": round(km / self.velocidad_kmh * 60),
                 "fuente": "linea_recta", "perfil": None,
-                "indicacion": "vuelo en línea recta", "aviso": None}
+                "indicacion": "vuelo en línea recta", "aviso": None,
+                "trazo": linea_recta(origen, destino)}
 
 
 # Fábrica simple: el texto del medio -> la estrategia que sabe planearlo.

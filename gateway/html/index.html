@@ -4,6 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Plataforma de entregas</title>
+  <!-- Leaflet (mapas). integrity: si el archivo de la CDN cambiara, el navegador no lo carga. -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <style>
     :root {
       --fondo: #f3f5f8;
@@ -195,6 +200,12 @@
 
     details { margin-top: 12px; font-size: .85rem; }
     summary { cursor: pointer; color: var(--suave); }
+    /* Mapa de la ruta */
+    .mapa { height: 240px; margin-top: 12px; border: 1px solid var(--borde); border-radius: 8px;
+            position: relative; z-index: 0; /* que los controles del mapa no tapen el toast */ }
+    .leyenda-mapa { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; font-size: .75rem; color: var(--suave); }
+    .leyenda-mapa i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+
     /* Tarifa */
     .encabezado-medio { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .precio { font-size: 1.6rem; font-weight: 700; color: var(--ok); white-space: nowrap; }
@@ -481,6 +492,42 @@
       formPedido.elements.destino_lng.value = lng;
     });
 
+    // ---------- Mapa de la ruta (Leaflet) ----------
+    const mapas = {};  // un mapa por caja ("mapa-resultado", "mapa-seguimiento")
+    const COLOR = { almacen: "#137a3f", destino: "#b42318", ruta: "#1f6feb" };
+
+    function htmlMapa(id, plan) {
+      if (!plan || !plan.trazo || !window.L) return "";  // sin trazo (pedidos viejos) o sin internet
+      const recta = plan.fuente !== "openrouteservice";
+      return '<div class="mapa" id="' + id + '" role="img" aria-label="Mapa de la ruta de entrega"></div>' +
+        '<div class="leyenda-mapa"><span><i style="background:' + COLOR.almacen + '"></i>Almacén</span>' +
+        '<span><i style="background:' + COLOR.destino + '"></i>Destino</span>' +
+        "<span>" + (recta ? "- - línea recta (" + esc(plan.fuente === "linea_recta" ? "vuelo del dron" : "ruta estimada") + ")"
+                          : "── ruta por calle (OpenRouteService)") + "</span></div>";
+    }
+
+    // Se llama DESPUÉS de meter el HTML: Leaflet necesita que la caja ya exista en la página.
+    function dibujarMapa(id, plan) {
+      if (mapas[id]) { mapas[id].remove(); delete mapas[id]; }  // el mapa anterior de esa caja
+      if (!document.getElementById(id)) return;
+      const mapa = L.map(id, { scrollWheelZoom: false });       // que la rueda siga bajando la página
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      }).addTo(mapa);
+      const recta = plan.fuente !== "openrouteservice";
+      const linea = L.polyline(plan.trazo, { color: COLOR.ruta, weight: 4, opacity: .85,
+                                             dashArray: recta ? "6 8" : null }).addTo(mapa);
+      const inicio = plan.origen ? [plan.origen.lat, plan.origen.lng] : plan.trazo[0];
+      const fin = plan.destino ? [plan.destino.lat, plan.destino.lng] : plan.trazo[plan.trazo.length - 1];
+      const punto = (lugar, color, texto) => L.circleMarker(lugar, { radius: 7, color: "#fff", weight: 2,
+        fillColor: color, fillOpacity: 1 }).bindTooltip(texto).addTo(mapa);
+      punto(inicio, COLOR.almacen, "Almacén (TecNM)");
+      punto(fin, COLOR.destino, "Destino");
+      mapa.fitBounds(linea.getBounds(), { padding: [24, 24] });
+      mapas[id] = mapa;
+    }
+
     // ---------- Tarifa ----------
     const pesos = (n) => "$" + Number(n).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const PRIORIDADES = { normal: "normal", express: "express", mismo_dia: "mismo día" };
@@ -615,6 +662,7 @@
         html += '<p class="motivo">' + esc(c.motivo) + "</p>";
         html += htmlDistancia(c.distancia_km, c.distancia_fuente);
         html += htmlPlan(c.plan);
+        html += htmlMapa("mapa-resultado", c.plan);
         html += htmlTarifa(c.tarifa);
         if (c.plan_b) {
           html += '<div class="alerta aviso">Plan B: se asignó el medio por defecto. Pedidos siguió funcionando.</div>';
@@ -636,6 +684,7 @@
       html += "<details><summary>Ver respuesta completa (JSON)</summary><pre>" +
               esc("HTTP " + status + "\n" + JSON.stringify(c, null, 2)) + "</pre></details>";
       caja.innerHTML = html;
+      if (c.plan && c.plan.trazo && window.L) dibujarMapa("mapa-resultado", c.plan);
     }
 
     // ---------- Seguimiento por folio ----------
@@ -670,11 +719,13 @@
         "<dt>Registrado</dt><dd>" + esc(c.creado_en) + "</dd>" +
         "<dt>Motivo</dt><dd>" + esc(c.motivo) + "</dd>" +
         "<dt>Tarifa</dt><dd>" + (c.tarifa ? "<b>$" + esc(c.tarifa.total) + " " + esc(c.tarifa.moneda) + "</b>" : "—") + "</dd>" +
-        "</dl>" + htmlDistancia(c.distancia_km, c.distancia_fuente) + htmlPlan(c.plan) + htmlTarifa(c.tarifa) +
+        "</dl>" + htmlDistancia(c.distancia_km, c.distancia_fuente) + htmlPlan(c.plan) +
+        htmlMapa("mapa-seguimiento", c.plan) + htmlTarifa(c.tarifa) +
         (!botones ? "" : claveOperador
           ? '<div class="acciones" data-folio="' + esc(c.folio) + '">' + botones + "</div>"
           : '<p class="solo-operador">Solo un operador puede cambiar el estado.</p>') +
         (historial ? '<ol class="historial">' + historial + "</ol>" : "");
+      if (c.plan && c.plan.trazo && window.L) dibujarMapa("mapa-seguimiento", c.plan);
     }
 
     // Botones de estado: PATCH /pedidos/<folio> con el estado nuevo.
