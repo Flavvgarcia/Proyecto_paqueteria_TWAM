@@ -11,11 +11,14 @@ import joblib
 import pandas as pd
 from flask import Flask, jsonify, request
 
+import id_peticion
+
 from reglas import es_posible
 
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
+id_peticion.instalar(app, "recomendar")
 
 CARPETA_MODELOS = Path(__file__).resolve().parent / "modelo"
 

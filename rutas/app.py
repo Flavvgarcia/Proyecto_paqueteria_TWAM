@@ -13,8 +13,11 @@ import os
 import requests
 from flask import Flask, jsonify, request
 
+import id_peticion
+
 app = Flask(__name__)
 app.json.ensure_ascii = False  # acentos legibles en curl
+id_peticion.instalar(app, "rutas")
 
 ORS_URL = os.environ.get("ORS_URL", "https://api.openrouteservice.org")
 ORS_API_KEY = os.environ.get("ORS_API_KEY", "")

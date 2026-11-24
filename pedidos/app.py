@@ -18,10 +18,12 @@ from flask import Flask, jsonify, request
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+import id_peticion
 from validacion import validar
 
 app = Flask(__name__)
 app.json.ensure_ascii = False  # acentos legibles en curl
+id_peticion.instalar(app, "pedidos")
 
 # Dentro de Compose: http://recomendar:8002 (el nombre del servicio es el host).
 RECOMENDAR_URL = os.environ.get("RECOMENDAR_URL", "http://localhost:8002")
@@ -130,7 +132,8 @@ def medir_distancia(destino):
     """Le pide a rutas los km por calle hasta el destino. Regresa (km, fuente, nota).
     Si rutas no responde, km = None. Si el destino es inválido, lanza DestinoInvalido."""
     try:
-        r = requests.post(f"{RUTAS_URL}/distancia", json={"destino": destino}, timeout=8)
+        r = requests.post(f"{RUTAS_URL}/distancia", json={"destino": destino}, timeout=8,
+                          headers=id_peticion.cabeceras())
     except requests.RequestException as e:
         return None, None, f"rutas NO respondió al medir la distancia ({type(e).__name__})"
     if r.status_code == 400:
@@ -148,7 +151,8 @@ def pedir_plan(medio, destino):
     if not destino:
         return None, "sin destino: no se calculó el plan"
     try:
-        r = requests.post(f"{RUTAS_URL}/plan", json={"medio": medio, "destino": destino}, timeout=8)
+        r = requests.post(f"{RUTAS_URL}/plan", json={"medio": medio, "destino": destino}, timeout=8,
+                          headers=id_peticion.cabeceras())
     except requests.RequestException as e:
         return None, f"rutas NO respondió ({type(e).__name__}): pedido sin plan"
     if r.status_code != 200:
@@ -163,7 +167,8 @@ def consultar_recomendar(paquete, modelo, recorrido):
     Si recomendar no responde: plan B. Si rechaza el paquete: error_http (sin folio)."""
     recorrido.append(f"pedidos llamó a recomendar ({modelo})")
     try:
-        r = requests.post(f"{RECOMENDAR_URL}/sugerir", json=paquete, timeout=5)
+        r = requests.post(f"{RECOMENDAR_URL}/sugerir", json=paquete, timeout=5,
+                          headers=id_peticion.cabeceras())
     except requests.RequestException as e:
         falla = f"NO respondió ({type(e).__name__})"
     else:

@@ -195,6 +195,8 @@
 
     details { margin-top: 12px; font-size: .85rem; }
     summary { cursor: pointer; color: var(--suave); }
+    .id-peticion { margin: 10px 0 0; font-size: .78rem; color: var(--suave); }
+    .id-peticion code { font-family: Consolas, monospace; user-select: all; }
     pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: .8rem; }
 
     /* Seguimiento */
@@ -426,16 +428,21 @@
       return div.innerHTML;
     }
 
-    // Llama al gateway y regresa { status, cuerpo }. Si no hay red, cuerpo = null.
+    // Llama al gateway y regresa { status, cuerpo, id }. Si no hay red, cuerpo = null.
+    // id = X-Request-ID que puso el gateway: con él se busca la petición en los logs.
     async function llamar(ruta, opciones) {
       try {
         const r = await fetch(ruta, opciones);
         let cuerpo = null;
         try { cuerpo = await r.json(); } catch (e) { /* respuesta sin JSON (p. ej. 502 de nginx) */ }
-        return { status: r.status, cuerpo };
+        return { status: r.status, cuerpo, id: r.headers.get("X-Request-ID") };
       } catch (e) {
-        return { status: 0, cuerpo: null };
+        return { status: 0, cuerpo: null, id: null };
       }
+    }
+
+    function htmlIdPeticion(id) {
+      return id ? '<p class="id-peticion">ID de petición: <code>' + esc(id) + "</code></p>" : "";
     }
 
     // ---------- Volumen calculado en vivo ----------
@@ -500,7 +507,7 @@
       limpiarErrores();
       boton.disabled = true;
       boton.textContent = "Enviando…";
-      const { status, cuerpo } = await llamar("/pedidos", {
+      const { status, cuerpo, id } = await llamar("/pedidos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(datos),
@@ -508,7 +515,7 @@
       boton.disabled = false;
       boton.textContent = "Crear pedido";
 
-      mostrarResultado(status, cuerpo);
+      mostrarResultado(status, cuerpo, id);
       cargarRecientes();
     });
 
@@ -537,7 +544,7 @@
       });
     }
 
-    function mostrarResultado(status, c) {
+    function mostrarResultado(status, c, id) {
       const caja = document.getElementById("resultado");
       if (!c) {
         caja.innerHTML = '<div class="alerta error">No se pudo contactar al gateway (HTTP ' + status + ').</div>';
@@ -572,6 +579,7 @@
       if (c.recorrido) {
         html += '<ol class="recorrido">' + c.recorrido.map((p) => "<li>" + esc(p) + "</li>").join("") + "</ol>";
       }
+      html += htmlIdPeticion(id);
       html += "<details><summary>Ver respuesta completa (JSON)</summary><pre>" +
               esc("HTTP " + status + "\n" + JSON.stringify(c, null, 2)) + "</pre></details>";
       caja.innerHTML = html;
