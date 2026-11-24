@@ -195,6 +195,16 @@
 
     details { margin-top: 12px; font-size: .85rem; }
     summary { cursor: pointer; color: var(--suave); }
+    /* Tarifa */
+    .encabezado-medio { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .precio { font-size: 1.6rem; font-weight: 700; color: var(--ok); white-space: nowrap; }
+    .precio small { font-size: .8rem; font-weight: 600; color: var(--suave); margin-left: 4px; }
+    .tarifa { margin-top: 12px; font-size: .85rem; }
+    .tarifa table { width: 100%; margin-top: 6px; }
+    .tarifa td { padding: 3px 0; border: 0; }
+    .tarifa td:last-child { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .tarifa tr.suma td { border-top: 1px solid var(--borde); font-weight: 600; }
+    .tarifa tr.total td { font-weight: 700; font-size: .95rem; }
     .id-peticion { margin: 10px 0 0; font-size: .78rem; color: var(--suave); }
     .id-peticion code { font-family: Consolas, monospace; user-select: all; }
     pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: .8rem; }
@@ -463,6 +473,27 @@
       formPedido.elements.destino_lng.value = lng;
     });
 
+    // ---------- Tarifa ----------
+    const pesos = (n) => "$" + Number(n).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const PRIORIDADES = { normal: "normal", express: "express", mismo_dia: "mismo día" };
+
+    function htmlPrecio(t) {
+      return t ? '<span class="precio">$' + esc(t.total) + "<small>" + esc(t.moneda) + "</small></span>" : "";
+    }
+    // Desglose: conceptos del servicio, × prioridad, + seguro = total.
+    function htmlTarifa(t) {
+      if (!t) return "";
+      const filas = t.conceptos.map((c) =>
+        "<tr><td>" + esc(c.concepto) + "</td><td>" + pesos(c.monto) + "</td></tr>").join("");
+      const conPrioridad = t.servicio * t.multiplicador;
+      return '<details class="tarifa"><summary>Ver desglose de la tarifa</summary><table>' + filas +
+        '<tr class="suma"><td>Servicio</td><td>' + pesos(t.servicio) + "</td></tr>" +
+        "<tr><td>× " + esc(t.multiplicador) + " (prioridad " + esc(PRIORIDADES[t.prioridad] || t.prioridad) + ")</td><td>" + pesos(conPrioridad) + "</td></tr>" +
+        "<tr><td>+ Seguro 0.5 % del valor declarado</td><td>" + pesos(t.seguro) + "</td></tr>" +
+        '<tr class="total"><td>Total' + (t.minimo_aplicado ? " (tarifa mínima)" : " (redondeado)") + "</td><td>$" + esc(t.total) + " " + esc(t.moneda) + "</td></tr>" +
+        "</table></details>";
+    }
+
     // Distancia con la que decidió el modelo y de dónde salió.
     function htmlDistancia(km, fuente) {
       if (km == null) return "";
@@ -571,11 +602,12 @@
         if (c.plan_b) insignias.push('<span class="insignia error">plan B</span>');
         if (c.repetido) insignias.push('<span class="insignia aviso">repetido: no se creó otro pedido</span>');
         html += '<p class="vacio">Folio <span class="folio">' + esc(c.folio) + "</span></p>";
-        html += '<p class="medio-grande">' + esc(c.medio) + "</p>";
+        html += '<div class="encabezado-medio"><p class="medio-grande">' + esc(c.medio) + "</p>" + htmlPrecio(c.tarifa) + "</div>";
         html += '<div class="fila">' + insignias.join("") + "</div>";
         html += '<p class="motivo">' + esc(c.motivo) + "</p>";
         html += htmlDistancia(c.distancia_km, c.distancia_fuente);
         html += htmlPlan(c.plan);
+        html += htmlTarifa(c.tarifa);
         if (c.plan_b) {
           html += '<div class="alerta aviso">Plan B: se asignó el medio por defecto. Pedidos siguió funcionando.</div>';
         }
@@ -629,7 +661,8 @@
         "<dt>Modelo</dt><dd>" + esc(c.modelo) + "</dd>" +
         "<dt>Registrado</dt><dd>" + esc(c.creado_en) + "</dd>" +
         "<dt>Motivo</dt><dd>" + esc(c.motivo) + "</dd>" +
-        "</dl>" + htmlDistancia(c.distancia_km, c.distancia_fuente) + htmlPlan(c.plan) +
+        "<dt>Tarifa</dt><dd>" + (c.tarifa ? "<b>$" + esc(c.tarifa.total) + " " + esc(c.tarifa.moneda) + "</b>" : "—") + "</dd>" +
+        "</dl>" + htmlDistancia(c.distancia_km, c.distancia_fuente) + htmlPlan(c.plan) + htmlTarifa(c.tarifa) +
         (botones ? '<div class="acciones" data-folio="' + esc(c.folio) + '">' + botones + "</div>" : "") +
         (historial ? '<ol class="historial">' + historial + "</ol>" : "");
     }
@@ -688,8 +721,9 @@
         "<td>" + esc(p.medio) + (p.plan_b ? ' <span class="insignia error">B</span>' : "") + "</td>" +
         "<td>" + htmlEstado(p.estado) + "</td>" +
         "<td>" + (p.plan ? esc(p.plan.minutos) + " min" : "—") + "</td>" +
+        "<td>" + (p.tarifa ? "$" + esc(p.tarifa.total) : "—") + "</td>" +
         "<td>" + esc(p.creado_en) + "</td></tr>").join("");
-      caja.innerHTML = "<table><thead><tr><th>Folio</th><th>Medio</th><th>Estado</th><th>Tiempo</th><th>Fecha</th></tr></thead>" +
+      caja.innerHTML = "<table><thead><tr><th>Folio</th><th>Medio</th><th>Estado</th><th>Tiempo</th><th>Tarifa</th><th>Fecha</th></tr></thead>" +
                        "<tbody>" + filas + "</tbody></table>";
     }
 

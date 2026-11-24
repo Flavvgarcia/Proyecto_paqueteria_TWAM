@@ -22,6 +22,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 import id_peticion
+import tarifa
 from validacion import validar
 
 app = Flask(__name__)
@@ -66,7 +67,7 @@ EVENTO = """jsonb_build_object('estado', %s::text, 'fecha',
     to_char(now() AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI:SS'))"""
 
 # La distancia vive dentro del paquete (JSONB): "->" la saca tal cual (número o null).
-COLUMNAS = """folio, medio, motivo, modelo, plan_b, estado, plan, historial,
+COLUMNAS = """folio, medio, motivo, modelo, plan_b, estado, plan, historial, tarifa,
     paquete->'distancia_km' AS distancia_km, paquete->>'distancia_fuente' AS distancia_fuente,
     to_char(creado_en AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI:SS') AS creado_en"""
 
@@ -98,6 +99,9 @@ def crear_tabla():
         # UNIQUE: la base garantiza que una clave no pueda guardarse dos veces, aunque
         # dos peticiones iguales lleguen al mismo tiempo.
         conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS clave_idempotencia VARCHAR(64) UNIQUE")
+        # Tarifa cotizada (con desglose). Se guarda tal cual: si cambian los precios,
+        # los pedidos viejos conservan lo que se les cotizó.
+        conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS tarifa JSONB")
         conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS huella CHAR(64)")
         # Historial de estados. A los pedidos viejos se les pone su registro con la fecha original.
         conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS historial JSONB NOT NULL DEFAULT '[]'")
@@ -116,12 +120,12 @@ def guardar(pedido, paquete, clave=None, huella=None):
         return conn.execute(
             """
             INSERT INTO pedidos (folio, medio, motivo, modelo, plan_b, paquete, plan, historial,
-                                 clave_idempotencia, huella)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, jsonb_build_array(""" + EVENTO + """), %s, %s)
+                                 clave_idempotencia, huella, tarifa)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, jsonb_build_array(""" + EVENTO + """), %s, %s, %s)
             RETURNING """ + COLUMNAS,
             (pedido["folio"], pedido["medio"], pedido["motivo"], pedido["modelo"],
              pedido["plan_b"], Jsonb(paquete), Jsonb(pedido["plan"]) if pedido["plan"] else None,
-             "registrado", clave, huella),
+             "registrado", clave, huella, Jsonb(pedido["tarifa"]) if pedido["tarifa"] else None),
         ).fetchone()
 
 
@@ -386,6 +390,15 @@ def crear():
     pedido["plan"], nota = pedir_plan(pedido["medio"], paquete.get("destino"))
     recorrido.append(nota)
 
+    # 3.5) Tarifa: con los km del plan (los del medio elegido); si no hay plan, con la distancia.
+    km = pedido["plan"]["km"] if pedido["plan"] else paquete.get("distancia_km")
+    pedido["tarifa"] = tarifa.calcular(pedido["medio"], km, paquete)
+    if pedido["tarifa"]:
+        recorrido.append(f"pedidos calculó la tarifa: ${pedido['tarifa']['total']} MXN"
+                         + (" (plan B, " + pedido["medio"] + ")" if pedido["plan_b"] else ""))
+    else:
+        recorrido.append("sin distancia: no se calculó la tarifa")
+
     # 4) Guardar en la base. Si la base no responde, error claro (no se inventa un folio).
     try:
         guardado = guardar(pedido, paquete, clave, huella)
@@ -402,7 +415,8 @@ def crear():
                         "recorrido": recorrido}), 503
     recorrido.append("pedidos guardó el pedido en la base")
     id_peticion.log(f"folio={guardado['folio']} creado: {guardado['medio']}"
-                    + (" (plan B)" if pedido["plan_b"] else ""))
+                    + (" (plan B)" if pedido["plan_b"] else "")
+                    + (f", ${pedido['tarifa']['total']}" if pedido["tarifa"] else ""))
 
     respuesta = {**con_siguientes(guardado), "servicio": "pedidos", "recorrido": recorrido}
     if not pedido["plan_b"]:
