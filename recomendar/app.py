@@ -92,6 +92,12 @@ def sugerir():
             medio, confianza = str(candidato), float(p)
             break
 
+    # Alternativas: todos los medios que SÍ cumplen las reglas, en orden de preferencia
+    # del modelo. Si no hay vehículos del primero, la flota prueba con el siguiente.
+    alternativas = [str(m) for m, _ in ranking if es_posible(m, paquete)]
+    if medio not in alternativas:
+        alternativas.insert(0, medio)
+
     nombre = MODELOS[model][1]
     motivo = f"{nombre}, confianza {confianza:.0%}"
     if medio != preferido:
@@ -104,6 +110,7 @@ def sugerir():
         "motivo": motivo,
         "preferido_por_modelo": preferido,
         "corregido_por_reglas": medio != preferido,
+        "alternativas": alternativas,
         "ranking": [{"medio": str(m), "confianza": round(float(p), 3)} for m, p in ranking],
     })
 

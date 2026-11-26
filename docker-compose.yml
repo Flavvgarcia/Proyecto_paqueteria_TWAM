@@ -32,12 +32,39 @@ services:
       interval: 2s
       retries: 30
 
+  # Base SOLO de la flota (una base por servicio). Usa la misma contraseña del .env.
+  db-flota:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: flota
+      POSTGRES_USER: flota
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en el archivo .env}
+    volumes:
+      - datos-flota:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flota -d flota"]
+      interval: 2s
+      retries: 30
+
+  flota:
+    build: ./flota
+    environment:
+      POSTGRES_HOST: db-flota
+      POSTGRES_DB: flota
+      POSTGRES_USER: flota
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en el archivo .env}
+    depends_on:
+      db-flota:
+        condition: service_healthy
+    restart: on-failure
+
   pedidos:
     build: ./pedidos
     environment:
       RECOMENDAR_URL: http://recomendar:8002
       RUTAS_URL: http://rutas:8003
       CLIMA_URL: http://clima:8004
+      FLOTA_URL: http://flota:8005
       POSTGRES_HOST: db-pedidos
       POSTGRES_DB: ${POSTGRES_DB:-pedidos}
       POSTGRES_USER: ${POSTGRES_USER:-pedidos}
@@ -48,6 +75,8 @@ services:
       rutas:
         condition: service_started
       clima:
+        condition: service_started
+      flota:
         condition: service_started
       recomendar:
         condition: service_started
@@ -67,6 +96,8 @@ services:
       - recomendar
       - rutas
       - clima
+      - flota
 
 volumes:
   datos-pedidos:
+  datos-flota:

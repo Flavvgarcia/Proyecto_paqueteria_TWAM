@@ -252,6 +252,18 @@
     dt { color: var(--suave); }
     dd { margin: 0; }
 
+    /* Flota */
+    .flota-tipo { display: grid; grid-template-columns: 90px 1fr auto; align-items: center; gap: 10px; margin: 8px 0; font-size: .85rem; }
+    .flota-tipo b { text-transform: capitalize; }
+    .barra { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--borde); }
+    .barra span { display: block; height: 100%; }
+    .b-disponible { background: #4ade80; } .b-apartado { background: #facc15; }
+    .b-en_ruta { background: var(--acento); } .b-mantenimiento { background: #9aa5b1; }
+    .flota-cuenta { color: var(--suave); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .leyenda-flota { display: flex; flex-wrap: wrap; gap: 12px; font-size: .75rem; color: var(--suave); margin-bottom: 4px; }
+    .leyenda-flota i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+    #flota table { margin-top: 10px; }
+
     /* Pedidos recientes */
     table { width: 100%; border-collapse: collapse; font-size: .85rem; }
     th { text-align: left; color: var(--suave); font-weight: 600; padding: 6px 4px; border-bottom: 1px solid var(--borde); }
@@ -330,6 +342,7 @@
       <span class="pastilla" id="salud-recomendar">recomendar</span>
       <span class="pastilla" id="salud-rutas">rutas</span>
       <span class="pastilla" id="salud-clima">clima</span>
+      <span class="pastilla" id="salud-flota">flota</span>
       <button class="boton-claro" id="btn-salud" type="button"><span class="giro" aria-hidden="true"></span><span class="texto">Revisar</span></button>
     </div>
   </header>
@@ -440,6 +453,11 @@
       <section class="tarjeta">
         <h2>Pedidos recientes</h2>
         <div id="recientes"><p class="vacio">Cargando…</p></div>
+      </section>
+
+      <section class="tarjeta">
+        <h2>Flota</h2>
+        <div id="flota"><p class="vacio">Cargando…</p></div>
       </section>
     </div>
   </main>
@@ -633,6 +651,7 @@
       if (cuerpo && (cuerpo.folio || (status >= 400 && status < 500))) claveIdempotencia = null;
       mostrarResultado(status, cuerpo, id);
       cargarRecientes();
+      cargarFlota();
     });
 
     // ---------- Errores por campo (400 de pedidos) ----------
@@ -674,6 +693,8 @@
         }
         if (c.plan_b) insignias.push('<span class="insignia error">plan B</span>');
         if (c.repetido) insignias.push('<span class="insignia aviso">repetido: no se creó otro pedido</span>');
+        insignias.push(c.vehiculo ? '<span class="insignia ok">vehículo ' + esc(c.vehiculo) + "</span>"
+                                  : '<span class="insignia aviso">sin vehículo: se asigna al despachar</span>');
         html += '<p class="vacio">Folio <span class="folio">' + esc(c.folio) + "</span></p>";
         html += '<div class="encabezado-medio"><p class="medio-grande">' + esc(c.medio) + "</p>" + htmlPrecio(c.tarifa) + "</div>";
         html += '<div class="fila">' + insignias.join("") + "</div>";
@@ -737,6 +758,7 @@
         "<dt>Modelo</dt><dd>" + esc(c.modelo) + "</dd>" +
         "<dt>Registrado</dt><dd>" + esc(c.creado_en) + "</dd>" +
         "<dt>Motivo</dt><dd>" + esc(c.motivo) + "</dd>" +
+        "<dt>Vehículo</dt><dd>" + (c.vehiculo ? "<b>" + esc(c.vehiculo) + "</b>" : "sin asignar (se asigna al despachar)") + "</dd>" +
         "<dt>Clima</dt><dd>" + textoClima(c.clima, c.clima_info) + "</dd>" +
         "<dt>Tarifa</dt><dd>" + (c.tarifa ? "<b>$" + esc(c.tarifa.total) + " " + esc(c.tarifa.moneda) + "</b>" : "—") + "</dd>" +
         "</dl>" + htmlDistancia(c.distancia_km, c.distancia_fuente) + htmlPlan(c.plan) +
@@ -773,6 +795,7 @@
         mostrarSeguimiento(cuerpo);
         mostrarToast("Pedido " + folio + ": " + (ESTADOS[cuerpo.estado] || {}).texto, true);
         cargarRecientes();
+      cargarFlota();
       } else {
         mostrarToast((cuerpo && cuerpo.error) || "No se pudo cambiar el estado (HTTP " + status + ")", false);
         buscarFolio(folio);  // vuelve a pintar con el estado real
@@ -873,6 +896,41 @@
       if (boton) buscarFolio(boton.dataset.folio);
     });
 
+    // ---------- Flota ----------
+    const ESTADOS_VEHICULO = { disponible: "libre", apartado: "apartado", en_ruta: "en ruta", mantenimiento: "en mantenimiento" };
+    const NOMBRE_TIPO = { bicicleta: "bicicletas", moto: "motos", camioneta: "camionetas", dron: "drones" };
+
+    async function cargarFlota() {
+      const caja = document.getElementById("flota");
+      const { status, cuerpo } = await llamar("/flota");
+      if (status !== 200 || !cuerpo || !cuerpo.resumen) {
+        caja.innerHTML = '<p class="vacio">No se pudo consultar la flota.</p>';
+        return;
+      }
+      const leyenda = '<div class="leyenda-flota">' + ["disponible", "apartado", "en_ruta"].map((e) =>
+        '<span><i class="b-' + e + '"></i>' + ESTADOS_VEHICULO[e] + "</span>").join("") + "</div>";
+      // Una barra por tipo: qué parte está libre, apartada o en ruta.
+      const barras = Object.entries(cuerpo.resumen).map(([tipo, r]) => {
+        const partes = ["disponible", "apartado", "en_ruta", "mantenimiento"].filter((e) => r[e]).map((e) =>
+          '<span class="b-' + e + '" style="width:' + (100 * r[e] / r.total) + '%" title="' +
+          r[e] + " " + ESTADOS_VEHICULO[e] + '"></span>').join("");
+        return '<div class="flota-tipo"><b>' + esc(NOMBRE_TIPO[tipo] || tipo) + '</b><div class="barra">' + partes +
+          '</div><span class="flota-cuenta">' + r.disponible + " de " + r.total + " libres</span></div>";
+      }).join("");
+      // Los vehículos ocupados, con su pedido (clic = seguimiento).
+      const ocupados = cuerpo.vehiculos.filter((v) => v.folio);
+      const tabla = !ocupados.length ? '<p class="vacio">Todos los vehículos están libres.</p>' :
+        "<table><thead><tr><th>Vehículo</th><th>Estado</th><th>Pedido</th><th>Desde</th></tr></thead><tbody>" +
+        ocupados.map((v) => "<tr><td><b>" + esc(v.clave) + "</b></td><td>" + esc(ESTADOS_VEHICULO[v.estado] || v.estado) +
+          '</td><td><button type="button" data-folio="' + esc(v.folio) + '">' + esc(v.folio) + "</button></td><td>" +
+          esc(v.desde.slice(11, 16)) + "</td></tr>").join("") + "</tbody></table>";
+      caja.innerHTML = leyenda + barras + tabla;
+    }
+    document.getElementById("flota").addEventListener("click", (ev) => {
+      const boton = ev.target.closest("button[data-folio]");
+      if (boton) buscarFolio(boton.dataset.folio);
+    });
+
     // ---------- Aviso flotante (toast) ----------
     let temporizadorToast;
     function mostrarToast(mensaje, bien) {
@@ -890,7 +948,7 @@
       boton.classList.add("cargando");
       boton.querySelector(".texto").textContent = "Revisando…";
 
-      const servicios = ["pedidos", "recomendar", "rutas", "clima"];
+      const servicios = ["pedidos", "recomendar", "rutas", "clima", "flota"];
       servicios.forEach((s) => {
         const pastilla = document.getElementById("salud-" + s);
         pastilla.className = "pastilla revisando";
@@ -926,6 +984,7 @@
     // Al abrir la página
     revisarSalud(false);  // al cargar, sin aviso
     cargarRecientes();
+    cargarFlota();
   </script>
 </body>
 </html>

@@ -9,6 +9,7 @@ GET  /pedidos  -> lista los pedidos guardados (los más recientes primero)
 GET  /pedidos/<folio> -> seguimiento de un pedido
 PATCH /pedidos/<folio> -> cambia el estado: {"estado": "en_camino"} (solo pasos permitidos)
                           SOLO operadores: encabezado "Authorization: Bearer <OPERADOR_CLAVE>"
+Cada pedido aparta un vehículo en el servicio FLOTA (saga: si algo falla después, se libera).
 GET  /operador -> comprueba la clave de operador (para el "modo operador" de la página)
 """
 import hashlib
@@ -36,6 +37,7 @@ id_peticion.instalar(app, "pedidos")
 RECOMENDAR_URL = os.environ.get("RECOMENDAR_URL", "http://localhost:8002")
 RUTAS_URL = os.environ.get("RUTAS_URL", "http://localhost:8003")
 CLIMA_URL = os.environ.get("CLIMA_URL", "http://localhost:8004")
+FLOTA_URL = os.environ.get("FLOTA_URL", "http://localhost:8005")
 # Si no se puede saber el clima, se asume lluvia: es lo prudente (así el dron no vuela
 # con un clima que nadie revisó). Queda marcado como "supuesto" en el pedido.
 CLIMA_SI_FALLA = "lluvia"
@@ -97,7 +99,7 @@ EVENTO = """jsonb_build_object('estado', %s::text, 'fecha',
     to_char(now() AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI:SS'))"""
 
 # La distancia vive dentro del paquete (JSONB): "->" la saca tal cual (número o null).
-COLUMNAS = """folio, medio, motivo, modelo, plan_b, estado, plan, historial, tarifa,
+COLUMNAS = """folio, medio, motivo, modelo, plan_b, estado, plan, historial, tarifa, vehiculo,
     paquete->'distancia_km' AS distancia_km, paquete->>'distancia_fuente' AS distancia_fuente,
     paquete->>'clima' AS clima, paquete->'clima_info' AS clima_info,
     to_char(creado_en AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI:SS') AS creado_en"""
@@ -133,6 +135,9 @@ def crear_tabla():
         # Tarifa cotizada (con desglose). Se guarda tal cual: si cambian los precios,
         # los pedidos viejos conservan lo que se les cotizó.
         conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS tarifa JSONB")
+        # Clave del vehículo de la flota (p. ej. MOTO-03). Se conserva aunque se libere:
+        # queda como registro de quién hizo la entrega.
+        conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS vehiculo VARCHAR(20)")
         conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS huella CHAR(64)")
         # Historial de estados. A los pedidos viejos se les pone su registro con la fecha original.
         conn.execute("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS historial JSONB NOT NULL DEFAULT '[]'")
@@ -151,12 +156,13 @@ def guardar(pedido, paquete, clave=None, huella=None):
         return conn.execute(
             """
             INSERT INTO pedidos (folio, medio, motivo, modelo, plan_b, paquete, plan, historial,
-                                 clave_idempotencia, huella, tarifa)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, jsonb_build_array(""" + EVENTO + """), %s, %s, %s)
+                                 clave_idempotencia, huella, tarifa, vehiculo)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, jsonb_build_array(""" + EVENTO + """), %s, %s, %s, %s)
             RETURNING """ + COLUMNAS,
             (pedido["folio"], pedido["medio"], pedido["motivo"], pedido["modelo"],
              pedido["plan_b"], Jsonb(paquete), Jsonb(pedido["plan"]) if pedido["plan"] else None,
-             "registrado", clave, huella, Jsonb(pedido["tarifa"]) if pedido["tarifa"] else None),
+             "registrado", clave, huella, Jsonb(pedido["tarifa"]) if pedido["tarifa"] else None,
+             pedido["vehiculo"]),
         ).fetchone()
 
 
@@ -223,6 +229,33 @@ def medir_distancia(destino):
     if "km" not in d:
         return None, None, "rutas respondió algo inesperado al medir la distancia"
     return d["km"], d["fuente"], f"rutas midió {d['km']} km por calle ({d['fuente']})"
+
+
+# ---------------------------------------------------------------------------
+# Flota. Cada llamada que "toma" algo tiene su contraria para deshacerla (saga):
+#   apartar  <-> liberar          salida (en_ruta) <-> regreso (apartado)
+# ---------------------------------------------------------------------------
+def llamar_flota(metodo, ruta, cuerpo=None):
+    """Regresa (código HTTP, datos). Código None = flota no respondió."""
+    try:
+        r = requests.request(metodo, f"{FLOTA_URL}{ruta}", json=cuerpo, timeout=5,
+                             headers=id_peticion.cabeceras())
+    except requests.RequestException as e:
+        return None, {"error": f"flota NO respondió ({type(e).__name__})"}
+    return r.status_code, leer_json(r)
+
+
+def apartar_vehiculo(folio, medios):
+    """Pide a flota un vehículo, probando los medios en orden.
+    Regresa (vehiculo, medio, nota, nuevo). nuevo=False si el pedido YA tenía ese vehículo
+    (otra petición lo apartó): en ese caso esta petición no debe deshacerlo."""
+    codigo, d = llamar_flota("POST", "/asignaciones", {"folio": folio, "medios": medios})
+    if codigo in (200, 201) and d.get("vehiculo"):
+        v = d["vehiculo"]
+        return v, d["medio"], f"flota apartó {v['clave']}", not d.get("repetido")
+    if codigo == 409:
+        return None, None, f"flota: no hay vehículos libres ({', '.join(medios)})", False
+    return None, None, f"flota no disponible ({d.get('error') or codigo})", False
 
 
 def consultar_clima(destino, hora):
@@ -293,7 +326,9 @@ def consultar_recomendar(paquete, modelo, recorrido):
               "motivo": sugerencia.get("motivo") or "sin motivo",
               "modelo": sugerencia.get("modelo", modelo), "plan_b": False,
               "preferido_por_modelo": sugerencia.get("preferido_por_modelo"),
-              "corregido_por_reglas": sugerencia.get("corregido_por_reglas")}
+              "corregido_por_reglas": sugerencia.get("corregido_por_reglas"),
+              # medios que cumplen las reglas, por si no hay vehículos del primero
+              "alternativas": sugerencia.get("alternativas") or [sugerencia["medio"]]}
     return pedido, 201, None
 
 
@@ -365,26 +400,69 @@ def cambiar_estado(folio):
                         "estados": list(TRANSICIONES)}), 400
     try:
         with conectar() as conn:
-            fila = conn.execute("SELECT estado FROM pedidos WHERE folio = %s", (folio,)).fetchone()
-            if fila is None:
-                return jsonify({"servicio": "pedidos", "error": f"no existe el folio {folio}"}), 404
-            actual = fila["estado"]
-            if nuevo not in TRANSICIONES.get(actual, []):
-                # 409 Conflict: la petición es válida, pero choca con el estado actual del pedido.
-                return jsonify({"servicio": "pedidos", "estado": actual,
-                                "error": f"no se puede pasar de {actual} a {nuevo}",
-                                "siguientes": TRANSICIONES.get(actual, [])}), 409
-            # "AND estado = actual": si alguien lo cambió justo antes, no se pisa su cambio.
-            pedido = conn.execute(
-                "UPDATE pedidos SET estado = %s, historial = historial || jsonb_build_array("
-                + EVENTO + ") WHERE folio = %s AND estado = %s RETURNING " + COLUMNAS,
-                (nuevo, nuevo, folio, actual),
-            ).fetchone()
+            fila = conn.execute("SELECT estado, medio, vehiculo FROM pedidos WHERE folio = %s",
+                                (folio,)).fetchone()
     except psycopg.Error:
         return jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible"}), 503
-    if pedido is None:
-        return jsonify({"servicio": "pedidos", "error": "el pedido cambió mientras tanto; vuelve a consultarlo"}), 409
-    id_peticion.log(f"folio={folio} cambió de {actual} a {nuevo}")
+    if fila is None:
+        return jsonify({"servicio": "pedidos", "error": f"no existe el folio {folio}"}), 404
+    actual = fila["estado"]
+    if nuevo not in TRANSICIONES.get(actual, []):
+        # 409 Conflict: la petición es válida, pero choca con el estado actual del pedido.
+        return jsonify({"servicio": "pedidos", "estado": actual,
+                        "error": f"no se puede pasar de {actual} a {nuevo}",
+                        "siguientes": TRANSICIONES.get(actual, [])}), 409
+
+    # 1) Primero la flota (si falla, el pedido NO cambia: o cambian los dos o ninguno).
+    #    Se guarda cómo deshacer cada paso por si después falla la base (saga).
+    vehiculo, deshacer = fila["vehiculo"], []
+    if nuevo == "en_camino":
+        # Despachar: si el pedido se creó sin vehículo, es el momento de conseguir uno.
+        if not vehiculo:
+            v, _, nota, es_nuevo = apartar_vehiculo(folio, [fila["medio"]])
+            if not v:
+                return jsonify({"servicio": "pedidos", "error": f"no se puede despachar: {nota}"}), \
+                    (409 if "no hay vehículos" in nota else 503)
+            vehiculo = v["clave"]
+            if es_nuevo:   # solo se deshace lo que ESTA petición hizo
+                deshacer.append(("DELETE", f"/asignaciones/{folio}", None))
+        codigo, d = llamar_flota("PATCH", f"/asignaciones/{folio}", {"estado": "en_ruta"})
+        if codigo != 200:
+            for paso in reversed(deshacer):
+                llamar_flota(*paso)
+            return jsonify({"servicio": "pedidos",
+                            "error": f"la flota no pudo dar salida a {vehiculo}: {d.get('error')}"}), 503
+        if not d.get("repetido"):  # si ya estaba en ruta, lo hizo otra petición: no se toca
+            deshacer.append(("PATCH", f"/asignaciones/{folio}", {"estado": "apartado"}))
+    elif vehiculo:  # entregado o cancelado: el vehículo queda libre para otro pedido
+        codigo, d = llamar_flota("DELETE", f"/asignaciones/{folio}")
+        if codigo != 200:
+            return jsonify({"servicio": "pedidos",
+                            "error": f"no se pudo liberar {vehiculo}: {d.get('error')}. Intenta de nuevo"}), 503
+        if d.get("liberado"):
+            antes = "en_ruta" if actual == "en_camino" else "apartado"
+            deshacer.append(("POST", "/asignaciones",
+                             {"folio": folio, "vehiculo": vehiculo, "estado": antes}))
+
+    # 2) Luego la base. "AND estado = actual": si alguien lo cambió justo antes, no se pisa.
+    try:
+        with conectar() as conn:
+            pedido = conn.execute(
+                "UPDATE pedidos SET estado = %s, vehiculo = %s, historial = historial || jsonb_build_array("
+                + EVENTO + ") WHERE folio = %s AND estado = %s RETURNING " + COLUMNAS,
+                (nuevo, vehiculo, nuevo, folio, actual),
+            ).fetchone()
+        error = None if pedido else (
+            jsonify({"servicio": "pedidos", "error": "el pedido cambió mientras tanto; vuelve a consultarlo"}), 409)
+    except psycopg.Error:
+        error = jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible"}), 503
+    if error:
+        # Compensación: lo que se hizo en la flota se deshace, en orden inverso.
+        for paso in reversed(deshacer):
+            llamar_flota(*paso)
+        id_peticion.log(f"folio={folio}: no se guardó {nuevo}; flota compensada ({len(deshacer)} paso(s))")
+        return error
+    id_peticion.log(f"folio={folio} cambió de {actual} a {nuevo}" + (f" ({vehiculo})" if vehiculo else ""))
     return jsonify(con_siguientes(pedido))
 
 
@@ -458,13 +536,29 @@ def crear():
         # Sin distancia no se le puede preguntar al modelo: plan B directo.
         pedido = {"folio": nuevo_folio(), "medio": MEDIO_POR_DEFECTO, "modelo": modelo,
                   "motivo": "no se pudo medir la distancia; se asignó el medio por defecto",
-                  "plan_b": True}
+                  "plan_b": True, "alternativas": [MEDIO_POR_DEFECTO]}
         recorrido.append("sin distancia no se consulta al modelo → plan B")
         codigo = 503
     else:
         pedido, codigo, error = consultar_recomendar(paquete, modelo, recorrido)
         if error:
             return error
+
+    # 2.5) Vehículo: se aparta en flota. Si no hay del medio elegido, flota prueba con las
+    #      alternativas (los medios que también cumplen las reglas, en orden del modelo).
+    #      Sin vehículo (no hay libres o flota caída) el pedido se crea igual: se le
+    #      asigna uno al despacharlo.
+    alternativas = pedido.get("alternativas") or [pedido["medio"]]
+    medios = [pedido["medio"]] + [m for m in alternativas if m != pedido["medio"]]
+    vehiculo, medio_asignado, nota, _ = apartar_vehiculo(pedido["folio"], medios)
+    pedido["vehiculo"] = vehiculo["clave"] if vehiculo else None
+    if vehiculo and medio_asignado != pedido["medio"]:
+        nota += f": no había {pedido['medio']} libre, se cambió a {medio_asignado}"
+        pedido["motivo"] += f"; no había {pedido['medio']} disponible: se asignó {medio_asignado}"
+        pedido["medio"] = medio_asignado
+    elif not vehiculo:
+        nota += ": el pedido queda sin vehículo (se asigna al despachar)"
+    recorrido.append(nota)
 
     # 3) Plan de entrega con rutas. Si falla, el pedido se crea igual, sin plan.
     pedido["plan"], nota = pedir_plan(pedido["medio"], paquete.get("destino"))
@@ -480,16 +574,29 @@ def crear():
         recorrido.append("sin distancia: no se calculó la tarifa")
 
     # 4) Guardar en la base. Si la base no responde, error claro (no se inventa un folio).
+    def compensar():
+        """Saga: el pedido NO se guardó, así que su vehículo no debe quedarse apartado."""
+        if not pedido["vehiculo"]:
+            return
+        codigo, _ = llamar_flota("DELETE", f"/asignaciones/{pedido['folio']}")
+        if codigo == 200:
+            recorrido.append(f"compensación: se liberó {pedido['vehiculo']} (el pedido no se guardó)")
+        else:
+            recorrido.append(f"compensación FALLÓ: {pedido['vehiculo']} quedó apartado sin pedido")
+            id_peticion.log(f"INCONSISTENCIA: {pedido['vehiculo']} apartado para {pedido['folio']}, que no existe")
+
     try:
         guardado = guardar(pedido, paquete, clave, huella)
     except psycopg.errors.UniqueViolation:
         # Dos peticiones con la misma clave llegaron al mismo tiempo y la otra guardó primero:
         # la base no dejó duplicar. Se regresa el pedido que sí se guardó.
+        compensar()   # este intento apartó su propio vehículo: se devuelve
         previo = buscar_por_clave(clave) if clave else None
         if previo is None:
             raise
         return responder_repetido(previo, huella, recorrido)
     except psycopg.Error:
+        compensar()
         recorrido.append("la base de datos NO respondió: el pedido no se guardó")
         return jsonify({"servicio": "pedidos", "error": "la base de datos no está disponible",
                         "recorrido": recorrido}), 503
