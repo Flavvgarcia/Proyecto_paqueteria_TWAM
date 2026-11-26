@@ -35,6 +35,10 @@ id_peticion.instalar(app, "pedidos")
 # Dentro de Compose: http://recomendar:8002 (el nombre del servicio es el host).
 RECOMENDAR_URL = os.environ.get("RECOMENDAR_URL", "http://localhost:8002")
 RUTAS_URL = os.environ.get("RUTAS_URL", "http://localhost:8003")
+CLIMA_URL = os.environ.get("CLIMA_URL", "http://localhost:8004")
+# Si no se puede saber el clima, se asume lluvia: es lo prudente (así el dron no vuela
+# con un clima que nadie revisó). Queda marcado como "supuesto" en el pedido.
+CLIMA_SI_FALLA = "lluvia"
 MEDIO_POR_DEFECTO = "camioneta"
 
 # Idempotency-Key: la manda el cliente (un UUID por cada intento de crear un pedido).
@@ -95,6 +99,7 @@ EVENTO = """jsonb_build_object('estado', %s::text, 'fecha',
 # La distancia vive dentro del paquete (JSONB): "->" la saca tal cual (número o null).
 COLUMNAS = """folio, medio, motivo, modelo, plan_b, estado, plan, historial, tarifa,
     paquete->'distancia_km' AS distancia_km, paquete->>'distancia_fuente' AS distancia_fuente,
+    paquete->>'clima' AS clima, paquete->'clima_info' AS clima_info,
     to_char(creado_en AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI:SS') AS creado_en"""
 
 
@@ -218,6 +223,24 @@ def medir_distancia(destino):
     if "km" not in d:
         return None, None, "rutas respondió algo inesperado al medir la distancia"
     return d["km"], d["fuente"], f"rutas midió {d['km']} km por calle ({d['fuente']})"
+
+
+def consultar_clima(destino, hora):
+    """Le pregunta al servicio clima por el pronóstico a la hora de salida.
+    Regresa (clima, info, nota). Si falla, clima = None."""
+    params = {"hora": hora}
+    if destino:
+        params.update(lat=destino["lat"], lng=destino["lng"])
+    try:
+        r = requests.get(f"{CLIMA_URL}/clima", params=params, timeout=8,
+                         headers=id_peticion.cabeceras())
+    except requests.RequestException as e:
+        return None, None, f"clima NO respondió ({type(e).__name__})"
+    d = leer_json(r)
+    if r.status_code != 200 or "clima" not in d:
+        return None, None, f"clima respondió {r.status_code}: {d.get('error')}"
+    info = {"fuente": d.get("fuente"), "hora": d.get("hora"), "detalle": d.get("detalle")}
+    return d["clima"], info, f"clima pronosticó {d['clima']} para {d.get('hora')} ({d.get('fuente')})"
 
 
 def pedir_plan(medio, destino):
@@ -397,6 +420,20 @@ def crear():
         if previo:
             return responder_repetido(previo, huella, recorrido)
     modelo = paquete.get("modelo") or "arbol"
+
+    # 0.8) Clima: si viene "auto" (o no viene), se consulta el pronóstico a la hora de salida.
+    paquete.pop("clima_info", None)  # el origen del clima lo decide pedidos, no el cliente
+    if paquete["clima"] == "auto":
+        clima, info, nota = consultar_clima(paquete.get("destino"), paquete["hora_salida"])
+        recorrido.append(nota)
+        if clima is None:
+            clima = CLIMA_SI_FALLA
+            info = {"fuente": "supuesto", "aviso": nota}
+            recorrido.append(f"no se pudo saber el clima: se asume {CLIMA_SI_FALLA} (prudente)")
+        paquete["clima"], paquete["clima_info"] = clima, info
+    else:
+        paquete["clima_info"] = {"fuente": "manual"}
+        recorrido.append(f"se usa el clima escrito a mano ({paquete['clima']})")
 
     # 1) Distancia real: la mide rutas con el destino. El modelo decide con ella.
     paquete.pop("distancia_fuente", None)  # la fuente la decide pedidos, no el cliente

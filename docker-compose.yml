@@ -10,6 +10,13 @@ services:
       ALMACEN_LAT: ${ALMACEN_LAT:-}
       ALMACEN_LNG: ${ALMACEN_LNG:-}
 
+  clima:
+    build: ./clima
+    environment:
+      # Open-Meteo no necesita clave. El almacén se usa si un pedido no trae destino.
+      ALMACEN_LAT: ${ALMACEN_LAT:-}
+      ALMACEN_LNG: ${ALMACEN_LNG:-}
+
   db-pedidos:
     image: postgres:16-alpine
     environment:
@@ -30,6 +37,7 @@ services:
     environment:
       RECOMENDAR_URL: http://recomendar:8002
       RUTAS_URL: http://rutas:8003
+      CLIMA_URL: http://clima:8004
       POSTGRES_HOST: db-pedidos
       POSTGRES_DB: ${POSTGRES_DB:-pedidos}
       POSTGRES_USER: ${POSTGRES_USER:-pedidos}
@@ -38,6 +46,8 @@ services:
       OPERADOR_CLAVE: ${OPERADOR_CLAVE:-}
     depends_on:
       rutas:
+        condition: service_started
+      clima:
         condition: service_started
       recomendar:
         condition: service_started
@@ -56,6 +66,7 @@ services:
       - pedidos
       - recomendar
       - rutas
+      - clima
 
 volumes:
   datos-pedidos:

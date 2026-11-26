@@ -329,6 +329,7 @@
       <span class="pastilla" id="salud-pedidos">pedidos</span>
       <span class="pastilla" id="salud-recomendar">recomendar</span>
       <span class="pastilla" id="salud-rutas">rutas</span>
+      <span class="pastilla" id="salud-clima">clima</span>
       <button class="boton-claro" id="btn-salud" type="button"><span class="giro" aria-hidden="true"></span><span class="texto">Revisar</span></button>
     </div>
   </header>
@@ -378,7 +379,8 @@
             </label>
             <label>Clima
               <select name="clima">
-                <option value="despejado" selected>Despejado</option>
+                <option value="auto" selected>Automático</option>
+                <option value="despejado">Despejado</option>
                 <option value="lluvia">Lluvia</option>
                 <option value="viento_fuerte">Viento fuerte</option>
               </select>
@@ -549,6 +551,22 @@
         "</table></details>";
     }
 
+    // Clima con el que decidió el modelo y de dónde salió.
+    const CLIMAS = { despejado: "despejado", lluvia: "lluvia", viento_fuerte: "viento fuerte" };
+    function textoClima(clima, info) {
+      if (!clima) return "—";
+      const nombre = "<b>" + esc(CLIMAS[clima] || clima) + "</b>";
+      if (!info || info.fuente === "manual") return nombre + " (escrito a mano)";
+      if (info.fuente === "supuesto") return nombre + ' <span class="insignia aviso">supuesto: no se pudo consultar</span>';
+      const d = info.detalle || {};
+      const hora = info.hora ? info.hora.slice(11, 16) : "";
+      return nombre + " · pronóstico Open-Meteo " + esc(hora) + " h (" + esc(d.lluvia_mm) + " mm, viento " +
+             esc(d.viento_kmh) + " km/h, ráfagas " + esc(d.rafagas_kmh) + " km/h)";
+    }
+    function htmlClima(clima, info) {
+      return clima ? '<p class="detalle">Clima usado por el modelo: ' + textoClima(clima, info) + "</p>" : "";
+    }
+
     // Distancia con la que decidió el modelo y de dónde salió.
     function htmlDistancia(km, fuente) {
       if (km == null) return "";
@@ -661,6 +679,7 @@
         html += '<div class="fila">' + insignias.join("") + "</div>";
         html += '<p class="motivo">' + esc(c.motivo) + "</p>";
         html += htmlDistancia(c.distancia_km, c.distancia_fuente);
+        html += htmlClima(c.clima, c.clima_info);
         html += htmlPlan(c.plan);
         html += htmlMapa("mapa-resultado", c.plan);
         html += htmlTarifa(c.tarifa);
@@ -718,6 +737,7 @@
         "<dt>Modelo</dt><dd>" + esc(c.modelo) + "</dd>" +
         "<dt>Registrado</dt><dd>" + esc(c.creado_en) + "</dd>" +
         "<dt>Motivo</dt><dd>" + esc(c.motivo) + "</dd>" +
+        "<dt>Clima</dt><dd>" + textoClima(c.clima, c.clima_info) + "</dd>" +
         "<dt>Tarifa</dt><dd>" + (c.tarifa ? "<b>$" + esc(c.tarifa.total) + " " + esc(c.tarifa.moneda) + "</b>" : "—") + "</dd>" +
         "</dl>" + htmlDistancia(c.distancia_km, c.distancia_fuente) + htmlPlan(c.plan) +
         htmlMapa("mapa-seguimiento", c.plan) + htmlTarifa(c.tarifa) +
@@ -870,14 +890,14 @@
       boton.classList.add("cargando");
       boton.querySelector(".texto").textContent = "Revisando…";
 
-      const servicios = ["pedidos", "recomendar", "rutas"];
+      const servicios = ["pedidos", "recomendar", "rutas", "clima"];
       servicios.forEach((s) => {
         const pastilla = document.getElementById("salud-" + s);
         pastilla.className = "pastilla revisando";
         pastilla.textContent = s + " · revisando";
       });
 
-      // Las dos consultas a la vez; se espera a que terminen ambas.
+      // Todas las consultas a la vez; se espera a que terminen todas.
       const resultados = await Promise.all(servicios.map((s) => llamar("/salud/" + s)));
       const caidos = [];
       servicios.forEach((s, i) => {

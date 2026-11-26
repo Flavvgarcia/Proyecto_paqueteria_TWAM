@@ -25,12 +25,12 @@ CASILLAS = ["fragil", "refrigerado"]          # 0/1 (o true/false)
 OPCIONES = {
     "prioridad": ["normal", "express", "mismo_dia"],
     "zona_destino": ["centro", "residencial", "periferia", "rural"],
-    "clima": ["despejado", "lluvia", "viento_fuerte"],
+    "clima": ["auto", "despejado", "lluvia", "viento_fuerte"],   # auto = lo consulta el servicio clima
     "trafico": ["bajo", "medio", "alto"],
     "modelo": ["arbol", "bosque", "red"],
 }
 # Opcionales: la distancia la mide rutas, el volumen se calcula, el modelo tiene default.
-OPCIONALES = {"distancia_km", "volumen_l", "modelo", "destino"}
+OPCIONALES = {"distancia_km", "volumen_l", "modelo", "destino", "clima"}
 
 
 def a_numero(valor):
@@ -97,6 +97,10 @@ def validar(paquete):
             continue
         if paquete[campo] not in permitidas:
             errores[campo] = "debe ser una de: " + ", ".join(permitidas)
+
+    # Clima: si no viene, se consulta el pronóstico (servicio clima).
+    if paquete.get("clima") in (None, ""):
+        limpio["clima"] = "auto"
 
     # Destino: si viene, lat y lng numéricos y en rango (rutas lo vuelve a revisar).
     if paquete.get("destino") is not None:
